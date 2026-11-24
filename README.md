@@ -75,7 +75,14 @@ The same operations without an MCP client, JSON on stdout:
 
 | Variable | Purpose |
 | --- | --- |
-| `ANNAS_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. |
+| `ANNAS_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. Falls back to `ANNAS_ARCHIVE_API_KEY`. |
+
+On homelab the key already lives in the encrypted systemd credential store.
+Run aakb with it, without printing it:
+
+```bash
+ANNAS_ARCHIVE_API_KEY="$(systemd-creds --user decrypt --name=ANNAS_ARCHIVE_API_KEY ~/.config/credstore.encrypted/ANNAS_ARCHIVE_API_KEY -)" ./aakb account
+```
 | `ANNAS_DOWNLOAD_PATH` | Download folder. Default `~/annas-archive`. |
 | `ANNAS_BASE_URL` | Preferred mirror. Default `https://annas-archive.gl`. The host you set receives your credentials, so use only one you trust. |
 | `ANNAS_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |

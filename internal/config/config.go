@@ -49,8 +49,13 @@ func FromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("ANNAS_AUTO_BASE_URL: %w", err)
 		}
 	}
+	secretKey := os.Getenv("ANNAS_SECRET_KEY")
+	if secretKey == "" {
+		// Homelab stores this credential as ANNAS_ARCHIVE_API_KEY.
+		secretKey = os.Getenv("ANNAS_ARCHIVE_API_KEY")
+	}
 	return Config{
-		SecretKey:     os.Getenv("ANNAS_SECRET_KEY"),
+		SecretKey:     secretKey,
 		AccountCookie: os.Getenv("ANNAS_ACCOUNT_COOKIE"),
 		BaseURL:       os.Getenv("ANNAS_BASE_URL"),
 		AutoBaseURL:   auto,
