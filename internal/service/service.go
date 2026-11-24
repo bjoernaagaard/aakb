@@ -6,12 +6,15 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
+	"github.com/SokolskyNikita/annas-mcp/papers"
 
 	"github.com/bjoernaagaard/aakb/internal/config"
 )
@@ -21,11 +24,25 @@ const (
 	defaultDetailsTimeout  = 60 * time.Second
 	defaultDownloadTimeout = 30 * time.Minute
 	maxLimit               = 50
+	maxPartial             = 5
+	maxDescription         = 2000
 )
+
+// ErrInvalidArgument marks caller input the service rejects.
+var ErrInvalidArgument = errors.New("invalid argument")
+
+func invalid(format string, args ...any) error {
+	return fmt.Errorf("[INVALID_ARGUMENT] %s: %w", fmt.Sprintf(format, args...), ErrInvalidArgument)
+}
 
 // Service performs Anna's Archive operations for one configuration.
 type Service struct {
-	client *anna.Client
+	client     *anna.Client
+	papers     *papers.Client
+	baseURL    string
+	autoMirror bool
+	// DownloadPath is the folder downloads land in.
+	DownloadPath string
 }
 
 // New builds a Service and prepares the cache directory for the session file.
@@ -45,7 +62,20 @@ func New(cfg config.Config, logger *slog.Logger) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("anna client: %w", err)
 	}
-	return &Service{client: client}, nil
+	svc := &Service{client: client, baseURL: cfg.BaseURL, autoMirror: cfg.AutoBaseURL, DownloadPath: cfg.DownloadPath}
+	if cfg.OpenAlexKey != "" {
+		pc, err := papers.NewClient(papers.Config{
+			OpenAlexAPIKey: cfg.OpenAlexKey,
+			DownloadPath:   cfg.DownloadPath,
+			CacheDir:       cfg.CacheDir,
+			Archive:        client,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("openalex client: %w", err)
+		}
+		svc.papers = pc
+	}
+	return svc, nil
 }
 
 // Record is the unified search result across books, papers and catalog entries.
@@ -73,7 +103,9 @@ type Record struct {
 
 // SearchInput is the single search entry point for every kind.
 type SearchInput struct {
-	Kind               string `json:"kind,omitempty" jsonschema:"book, article or metadata; empty auto-detects a DOI as an article"`
+	Kind               string `json:"kind,omitempty" jsonschema:"book, article, metadata or openalex; empty auto-detects a DOI as an article"`
+	Provider           string `json:"provider,omitempty" jsonschema:"openalex routes article search to OpenAlex; needs OPENALEX_API_KEY"`
+	WorkType           string `json:"work_type,omitempty" jsonschema:"OpenAlex work type such as dissertation (openalex only)"`
 	Query              string `json:"query,omitempty" jsonschema:"title, author, topic, ISBN, DOI or MD5"`
 	Title              string `json:"title,omitempty" jsonschema:"phrase the title must contain"`
 	Author             string `json:"author,omitempty" jsonschema:"phrase the author must contain"`
@@ -83,7 +115,7 @@ type SearchInput struct {
 	Language           string `json:"language,omitempty" jsonschema:"comma-separated language codes such as en,de"`
 	Source             string `json:"source,omitempty" jsonschema:"comma-separated source libraries or catalogs"`
 	Content            string `json:"content,omitempty" jsonschema:"comma-separated content types such as book_nonfiction,magazine"`
-	Sort               string `json:"sort,omitempty" jsonschema:"newest, oldest, largest, smallest, newest_added or oldest_added"`
+	Sort               string `json:"sort,omitempty" jsonschema:"newest, oldest, largest, smallest, newest_added, oldest_added or random"`
 	Page               int    `json:"page,omitempty" jsonschema:"result page, starting at 1"`
 	Limit              int    `json:"limit,omitempty" jsonschema:"max results to return, 1 to 50"`
 	IncludeStats       bool   `json:"include_stats,omitempty" jsonschema:"add download and quality counts; costs extra requests"`
@@ -110,10 +142,41 @@ type DetailsInput struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"whole-operation timeout; 0 uses the default"`
 }
 
+// DetailsOutput is the trimmed, stable shape get_details returns.
+type DetailsOutput struct {
+	ID           string              `json:"id"`
+	Hash         string              `json:"hash,omitempty"`
+	URL          string              `json:"url"`
+	Title        string              `json:"title"`
+	Authors      string              `json:"authors,omitempty"`
+	Publisher    string              `json:"publisher,omitempty"`
+	Edition      string              `json:"edition,omitempty"`
+	Year         string              `json:"year,omitempty"`
+	Languages    []string            `json:"languages,omitempty"`
+	Format       string              `json:"format,omitempty"`
+	SizeBytes    int64               `json:"size_bytes,omitempty"`
+	Description  string              `json:"description,omitempty"`
+	Identifiers  map[string][]string `json:"identifiers,omitempty"`
+	Subjects     []string            `json:"subjects,omitempty"`
+	Sources      []string            `json:"sources,omitempty"`
+	FastDownload bool                `json:"fast_download"`
+	Problems     []anna.Problem      `json:"problems,omitempty"`
+	Stats        *anna.RecordStats   `json:"stats,omitempty"`
+}
+
+// ReadInput requests one bounded OpenAlex full-text passage.
+type ReadInput struct {
+	ID             string `json:"id" jsonschema:"OpenAlex work id, DOI or work URL"`
+	Continuation   string `json:"continuation,omitempty" jsonschema:"continuation token from a previous article_read result"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"max passages to return"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"whole-operation timeout; 0 uses the default"`
+}
+
 // DownloadInput selects exactly one file, by hash or by DOI.
 type DownloadInput struct {
-	Hash           string `json:"hash,omitempty" jsonschema:"MD5 hash or Anna's Archive /md5/ URL"`
+	Hash           string `json:"hash,omitempty" jsonschema:"MD5 hash or Anna's Archive /md5/ URL; give exactly one of hash, doi or openalex_id"`
 	DOI            string `json:"doi,omitempty" jsonschema:"paper DOI, resolved to a file first"`
+	OpenAlexID     string `json:"openalex_id,omitempty" jsonschema:"OpenAlex work id; downloads through OpenAlex first when configured"`
 	Title          string `json:"title,omitempty" jsonschema:"filename title for a fresh download"`
 	Format         string `json:"format,omitempty" jsonschema:"file extension such as epub or pdf; does not convert"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"whole-operation timeout; 0 uses the default"`
@@ -137,7 +200,15 @@ type AccountInput struct {
 // resolved to its single paper instead of a keyword page.
 func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchOutput, error) {
 	kind := strings.ToLower(strings.TrimSpace(in.Kind))
+	if err := validateSearch(in); err != nil {
+		return nil, err
+	}
 	timeout := timeoutOr(in.TimeoutSeconds, defaultSearchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if strings.EqualFold(in.Provider, "openalex") || kind == "openalex" {
+		return s.searchOpenAlex(ctx, in)
+	}
 	opts, err := searchOptions(in)
 	if err != nil {
 		return nil, err
@@ -147,8 +218,14 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchOutput, er
 		if err != nil {
 			return nil, wrap(err)
 		}
-		rec := paperRecord(paper)
-		return &SearchOutput{Kind: "article", Results: []*Record{rec}, Total: 1}, nil
+		out := &SearchOutput{Kind: "article", Results: []*Record{paperRecord(paper)}, Total: 1}
+		if in.IncludeStats {
+			s.attachStats(ctx, out, in.Rank)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		return out, nil
 	}
 	switch kind {
 	case "", "book":
@@ -158,11 +235,8 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchOutput, er
 		}
 		out := finishPage("book", in, page.Results, page.Partial,
 			page.Total, page.TotalIsLowerBound, page.MorePages,
-			func(b *anna.Book) *Record { return bookRecord(b) })
-		if in.IncludeStats {
-			s.attachStats(ctx, out, in.Rank)
-		}
-		return out, nil
+			bookRecord)
+		return s.finishSearch(ctx, in, out)
 	case "article":
 		page, err := s.client.FindArticle(ctx, in.Query, opts, timeout)
 		if err != nil {
@@ -170,11 +244,8 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchOutput, er
 		}
 		out := finishPage("article", in, page.Results, page.Partial,
 			page.Total, page.TotalIsLowerBound, page.MorePages,
-			func(p *anna.Paper) *Record { return paperRecord(p) })
-		if in.IncludeStats {
-			s.attachStats(ctx, out, in.Rank)
-		}
-		return out, nil
+			paperRecord)
+		return s.finishSearch(ctx, in, out)
 	case "metadata":
 		page, err := s.client.FindMetadata(ctx, in.Query, opts, timeout)
 		if err != nil {
@@ -182,49 +253,141 @@ func (s *Service) Search(ctx context.Context, in SearchInput) (*SearchOutput, er
 		}
 		return finishPage("metadata", in, page.Results, page.Partial,
 			page.Total, page.TotalIsLowerBound, page.MorePages,
-			func(m *anna.MetadataRecord) *Record { return metadataRecord(m) }), nil
+			metadataRecord), nil
 	default:
-		return nil, fmt.Errorf("[INVALID_ARGUMENT] kind %q: want book, article or metadata", in.Kind)
+		return nil, invalid("kind %q: want book, article, metadata or openalex", in.Kind)
 	}
 }
 
-// Details returns the full record for one id.
-func (s *Service) Details(ctx context.Context, in DetailsInput) (*anna.Details, error) {
-	d, err := s.client.Details(ctx, in.ID, timeoutOr(in.TimeoutSeconds, defaultDetailsTimeout))
+func (s *Service) finishSearch(ctx context.Context, in SearchInput, out *SearchOutput) (*SearchOutput, error) {
+	if in.IncludeStats {
+		s.attachStats(ctx, out, in.Rank)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if in.Rank {
+			rank(out.Results)
+		}
+	}
+	applyLimit(in, out)
+	return out, nil
+}
+
+func (s *Service) searchOpenAlex(ctx context.Context, in SearchInput) (*SearchOutput, error) {
+	if s.papers == nil {
+		return nil, fmt.Errorf("[CONFIG] OPENALEX_API_KEY is required for OpenAlex search")
+	}
+	res, err := s.papers.Search(ctx, papers.SearchOptions{
+		Query: in.Query, Title: in.Title, Author: in.Author, Year: in.Year,
+		Language: in.Language, WorkType: in.WorkType, Sort: in.Sort,
+		Page: in.Page, Limit: limitOr(in.Limit, 10),
+	})
 	if err != nil {
 		return nil, wrap(err)
 	}
-	return d, nil
+	out := &SearchOutput{Kind: "openalex", Total: res.Total, TotalIsLowerBound: res.TotalIsLowerBound, MorePages: res.MorePages}
+	for _, w := range res.Results {
+		out.Results = append(out.Results, workRecord(w))
+	}
+	for _, w := range res.PartialMatches {
+		out.PartialMatches = append(out.PartialMatches, workRecord(w))
+	}
+	if len(out.PartialMatches) > maxPartial {
+		out.PartialMatches = out.PartialMatches[:maxPartial]
+	}
+	out.Results = dedupe(out.Results)
+	applyLimit(in, out)
+	return out, nil
+}
+
+// Details returns the trimmed record for one id.
+func (s *Service) Details(ctx context.Context, in DetailsInput) (*DetailsOutput, error) {
+	timeout := timeoutOr(in.TimeoutSeconds, defaultDetailsTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	d, err := s.client.Details(ctx, in.ID, timeout)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	desc := d.Description
+	if len(desc) > maxDescription {
+		desc = desc[:maxDescription] + "..."
+	}
+	return &DetailsOutput{
+		ID: d.ID, Hash: d.Hash, URL: d.URL, Title: d.Title, Authors: d.Authors,
+		Publisher: d.Publisher, Edition: d.Edition, Year: d.Year, Languages: d.Languages,
+		Format: d.Format, SizeBytes: d.SizeBytes, Description: desc,
+		Identifiers: d.Identifiers, Subjects: d.Subjects, Sources: d.Sources,
+		FastDownload: d.FastDownload, Problems: d.Problems, Stats: d.Stats,
+	}, nil
 }
 
 // Account returns membership and remaining fast downloads.
 func (s *Service) Account(ctx context.Context, in AccountInput) (*anna.AccountStatus, error) {
-	st, err := s.client.AccountStatus(ctx, timeoutOr(in.TimeoutSeconds, defaultDetailsTimeout))
+	timeout := timeoutOr(in.TimeoutSeconds, defaultDetailsTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	st, err := s.client.AccountStatus(ctx, timeout)
 	if err != nil {
 		return nil, wrap(err)
 	}
 	return st, nil
 }
 
+// Read returns one bounded OpenAlex full-text passage.
+func (s *Service) Read(ctx context.Context, in ReadInput) (*papers.ReadResult, error) {
+	if s.papers == nil {
+		return nil, fmt.Errorf("[CONFIG] OPENALEX_API_KEY is required for article_read")
+	}
+	timeout := timeoutOr(in.TimeoutSeconds, defaultSearchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	res, err := s.papers.Read(ctx, papers.ReadOptions{ID: in.ID, Continuation: in.Continuation, Limit: in.Limit})
+	if err != nil {
+		return nil, wrap(err)
+	}
+	return res, nil
+}
+
 // Download fetches and verifies one file, reusing a matching local copy.
+// One deadline bounds every sub-call in the operation.
 func (s *Service) Download(ctx context.Context, in DownloadInput) (*DownloadOutput, error) {
 	timeout := timeoutOr(in.TimeoutSeconds, defaultDownloadTimeout)
-	hasHash := strings.TrimSpace(in.Hash) != ""
-	hasDOI := strings.TrimSpace(in.DOI) != ""
-	if hasHash == hasDOI {
-		return nil, fmt.Errorf("[INVALID_ARGUMENT] give exactly one of hash or doi")
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	given := 0
+	for _, v := range []string{in.Hash, in.DOI, in.OpenAlexID} {
+		if strings.TrimSpace(v) != "" {
+			given++
+		}
+	}
+	if given != 1 {
+		return nil, invalid("give exactly one of hash, doi or openalex_id")
+	}
+	if in.OpenAlexID != "" {
+		if s.papers == nil {
+			return nil, fmt.Errorf("[CONFIG] OPENALEX_API_KEY is required for an OpenAlex download")
+		}
+		res, err := s.papers.Download(ctx, papers.DownloadOptions{OpenAlexID: in.OpenAlexID, Title: in.Title, Format: in.Format}, nil)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		return &DownloadOutput{Path: res.Path, Bytes: res.Bytes}, nil
 	}
 	if in.Title == "" {
 		// Name the file after its record instead of "untitled".
-		if hasDOI {
+		if in.DOI != "" {
 			if paper, err := s.client.LookupDOI(ctx, in.DOI, timeout); err == nil {
 				in.Title = paper.Title
 			}
 		} else if d, err := s.client.Details(ctx, in.Hash, timeout); err == nil {
 			in.Title = d.Title
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
-	if hasDOI {
+	if in.DOI != "" {
 		res, err := s.client.DownloadArticle(ctx, anna.ArticleDownloadOptions{
 			DOI: in.DOI, Title: in.Title, Format: in.Format,
 		}, timeout, nil)
@@ -237,12 +400,14 @@ func (s *Service) Download(ctx context.Context, in DownloadInput) (*DownloadOutp
 		Hash: in.Hash, Title: in.Title, Format: in.Format,
 	}, timeout, nil)
 	if err != nil {
-		// An article hash is not on the book route; retry there once.
-		art, aerr := s.client.DownloadArticle(ctx, anna.ArticleDownloadOptions{
-			Hash: in.Hash, Title: in.Title, Format: in.Format,
-		}, timeout, nil)
-		if aerr == nil {
-			return downloadOutput(art), nil
+		// Fall back to the article route only for a genuine not-found.
+		if ctx.Err() == nil && (anna.CodeOf(err) == anna.NotFound || errors.Is(err, anna.ErrNotOnFastServers)) {
+			art, aerr := s.client.DownloadArticle(ctx, anna.ArticleDownloadOptions{
+				Hash: in.Hash, Title: in.Title, Format: in.Format,
+			}, timeout, nil)
+			if aerr == nil {
+				return downloadOutput(art), nil
+			}
 		}
 		return nil, wrap(err)
 	}
@@ -265,4 +430,28 @@ func timeoutOr(seconds int, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
+}
+
+// UpstreamReachable probes the configured mirror with one HEAD request.
+func (s *Service) UpstreamReachable(ctx context.Context) (string, int) {
+	base := s.baseURL
+	if base == "" {
+		base = "https://annas-archive.gl"
+	}
+	if !strings.HasPrefix(base, "http") {
+		base = "https://" + base
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base, nil)
+	if err != nil {
+		return "unreachable", 0
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "unreachable", 0
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // HEAD probe body is empty
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return "ok", resp.StatusCode
+	}
+	return "challenged", resp.StatusCode
 }

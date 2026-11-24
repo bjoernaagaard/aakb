@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,11 +19,26 @@ type Config struct {
 	AutoBaseURL   bool
 	DownloadPath  string
 	CacheDir      string
+	OpenAlexKey   string
+	HTTPToken     string
+}
+
+// LogValue redacts credentials so a Config can never leak through a log line.
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("base_url", c.BaseURL),
+		slog.Bool("auto_base_url", c.AutoBaseURL),
+		slog.String("download_path", c.DownloadPath),
+		slog.String("cache_dir", c.CacheDir),
+		slog.Bool("secret_key_set", c.SecretKey != ""),
+		slog.Bool("openalex_key_set", c.OpenAlexKey != ""),
+	)
 }
 
 // FromEnv builds a Config from ANNAS_* variables, for compatibility with
 // the existing Anna's Archive tools, plus AAKB_CACHE_DIR.
 func FromEnv() (Config, error) {
+	loadDotEnv(".env")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Config{}, fmt.Errorf("home directory: %w", err)
@@ -61,6 +77,8 @@ func FromEnv() (Config, error) {
 		AutoBaseURL:   auto,
 		DownloadPath:  downloadPath,
 		CacheDir:      cacheDir,
+		OpenAlexKey:   os.Getenv("OPENALEX_API_KEY"),
+		HTTPToken:     os.Getenv("AAKB_HTTP_TOKEN"),
 	}, nil
 }
 
@@ -77,4 +95,28 @@ func expandHome(path, home string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+// loadDotEnv sets missing variables from a simple KEY=value file.
+// Variables already in the environment always win.
+func loadDotEnv(path string) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is the fixed .env in the working directory
+	if err != nil {
+		return
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if _, exists := os.LookupEnv(key); !exists {
+			_ = os.Setenv(key, value) //nolint:errcheck // best-effort .env load
+		}
+	}
 }

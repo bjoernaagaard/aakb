@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
+
+	"github.com/SokolskyNikita/annas-mcp/papers"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
 )
@@ -60,6 +62,34 @@ func splitList(s string) []string {
 	return out
 }
 
+func validateSearch(in SearchInput) error {
+	if in.Limit < 0 || in.Limit > maxLimit {
+		return invalid("limit must be between 1 and %d", maxLimit)
+	}
+	if in.Page < 0 {
+		return invalid("page must be at least 1")
+	}
+	if in.TimeoutSeconds < 0 {
+		return invalid("timeout_seconds must not be negative")
+	}
+	return nil
+}
+
+func limitOr(limit, fallback int) int {
+	if limit <= 0 {
+		return fallback
+	}
+	return limit
+}
+
+// applyLimit caps exact results after stats and ranking have run.
+func applyLimit(in SearchInput, out *SearchOutput) {
+	limit := limitOr(in.Limit, 10)
+	if len(out.Results) > limit {
+		out.Results = out.Results[:limit]
+	}
+}
+
 func finishPage[T any](kind string, in SearchInput, results, partial []T,
 	total int, lowerBound, morePages bool, conv func(T) *Record) *SearchOutput {
 	out := &SearchOutput{Kind: kind, Total: total, TotalIsLowerBound: lowerBound, MorePages: morePages}
@@ -70,18 +100,11 @@ func finishPage[T any](kind string, in SearchInput, results, partial []T,
 		out.PartialMatches = filterDownloadable(out.PartialMatches)
 	}
 	out.Results = dedupe(out.Results)
+	if len(out.PartialMatches) > maxPartial {
+		out.PartialMatches = out.PartialMatches[:maxPartial]
+	}
 	if in.Rank && in.Sort == "" {
 		rank(out.Results)
-	}
-	limit := in.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	if limit > maxLimit {
-		limit = maxLimit
-	}
-	if len(out.Results) > limit {
-		out.Results = out.Results[:limit]
 	}
 	if morePages {
 		page := in.Page
@@ -107,7 +130,7 @@ func convertAll[T any](items []T, conv func(T) *Record) []*Record {
 func filterDownloadable(in []*Record) []*Record {
 	out := make([]*Record, 0, len(in))
 	for _, r := range in {
-		if r.FastDownload {
+		if r.FastDownload || (r.Kind == "article" && r.DOI != "") {
 			out = append(out, r)
 		}
 	}
@@ -120,17 +143,27 @@ func dedupe(in []*Record) []*Record {
 	seen := make(map[string]bool, len(in))
 	out := make([]*Record, 0, len(in))
 	for _, r := range in {
-		key := r.Hash
-		if key == "" {
-			key = strings.Join([]string{
+		keys := []string{
+			strings.Join([]string{
 				strings.ToLower(r.Title), strings.ToLower(r.Authors),
 				strings.ToLower(r.Format), r.Size,
-			}, "|")
+			}, "|"),
 		}
-		if seen[key] {
+		if r.Hash != "" {
+			keys = append(keys, "hash:"+r.Hash)
+		}
+		dup := false
+		for _, k := range keys {
+			if seen[k] {
+				dup = true
+			}
+		}
+		if dup {
 			continue
 		}
-		seen[key] = true
+		for _, k := range keys {
+			seen[k] = true
+		}
 		out = append(out, r)
 	}
 	return out
@@ -154,14 +187,21 @@ func rank(in []*Record) {
 		}
 		r.Score = score
 	}
-	sort.SliceStable(in, func(i, j int) bool { return in[i].Score > in[j].Score })
+	slices.SortStableFunc(in, func(a, b *Record) int {
+		return b.Score - a.Score
+	})
 }
 
-// attachStats fills Stats from one bounded lookup. A failed lookup
-// leaves Stats nil, which means unknown, not zero.
-func (s *Service) attachStats(ctx context.Context, out *SearchOutput, ranked bool) {
+// attachStats fills Stats for exact results only, from one bounded
+// lookup. A failed lookup leaves Stats nil, which means unknown,
+// not zero. The caller checks ctx afterwards.
+func (s *Service) attachStats(ctx context.Context, out *SearchOutput, _ bool) {
+	limit := 10
 	var hashes []string
-	for _, r := range append(out.Results, out.PartialMatches...) {
+	for _, r := range out.Results {
+		if len(hashes) >= limit {
+			break
+		}
 		if r.Hash != "" {
 			hashes = append(hashes, r.Hash)
 		}
@@ -173,14 +213,19 @@ func (s *Service) attachStats(ctx context.Context, out *SearchOutput, ranked boo
 	if err != nil {
 		return
 	}
-	for _, r := range append(out.Results, out.PartialMatches...) {
+	for _, r := range out.Results {
 		if st, ok := stats[r.Hash]; ok {
-			st := st
 			r.Stats = &st
 		}
 	}
-	if ranked {
-		rank(out.Results)
+}
+
+func workRecord(w *papers.Work) *Record {
+	return &Record{
+		Kind: "article", ID: w.OpenAlexID, Hash: w.Hash, Title: w.Title,
+		Authors: w.Authors, Publisher: w.Journal, Year: w.Year, Format: w.Format,
+		Size: w.Size, Sources: w.Sources, DOI: w.DOI, URL: w.PageURL,
+		FastDownload: w.FastDownload, PossibleIssues: w.PossibleIssues, Stats: w.Stats,
 	}
 }
 

@@ -6,13 +6,15 @@ import (
 	"log/slog"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
+	"github.com/SokolskyNikita/annas-mcp/papers"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bjoernaagaard/aakb/internal/service"
 )
 
 // Version is the aakb release version reported to MCP clients.
-const Version = "v0.1.0"
+// Release builds inject it with -ldflags; it defaults to a dev value.
+var Version = "dev"
 
 // New returns an MCP server backed by svc. Logs go to the caller's
 // logger, which must write to stderr so stdio stdout stays clean.
@@ -20,7 +22,7 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aakb", Version: Version}, &mcp.ServerOptions{
 		Instructions: "Search Anna's Archive for books, papers and catalog records, " +
 			"inspect one record in full, and download a verified file. " +
-			"Start with search, then get_details on a chosen result, then download by its hash or DOI. " +
+			"Start with search, then get_details on a chosen result, then download by its hash or DOI. Use article_read for OpenAlex full text when configured. " +
 			"Use only for material the user is entitled to obtain.",
 		Logger: logger,
 	})
@@ -40,9 +42,19 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Get record details",
 		Description: "Full record for one hash, /md5/ URL, DOI or catalog id: identifiers, edition, description, subjects, reported file problems and a better copy's hash when the archive knows one.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.DetailsInput) (*mcp.CallToolResult, *anna.Details, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.DetailsInput) (*mcp.CallToolResult, *service.DetailsOutput, error) {
 		d, err := svc.Details(ctx, in)
 		return nil, d, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "article_read",
+		Title:       "Read a paper's full text",
+		Description: "Bounded passages of OpenAlex structured full text with provenance and a continuation token. Needs OPENALEX_API_KEY. Abstract-only results say so instead of pretending to be full text.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.ReadInput) (*mcp.CallToolResult, *papers.ReadResult, error) {
+		out, err := svc.Read(ctx, in)
+		return nil, out, err
 	})
 
 	mcp.AddTool(server, &mcp.Tool{

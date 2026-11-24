@@ -11,13 +11,30 @@ Built on the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sd
 and the shared [anna Go client](https://github.com/SokolskyNikita/annas-mcp)
 from annas-mcp (MIT), with a unified tool surface, dedupe and ranking on top.
 
-## Build
+## Install
+
+Go install, Go 1.27 or newer:
+
+```bash
+go install github.com/bjoernaagaard/aakb/cmd/aakb@latest
+```
+
+Prebuilt binaries for Linux, macOS and Windows are attached to each
+[GitHub Release](https://github.com/bjoernaagaard/aakb/releases) with a
+`checksums.txt`. Verify the download against that file before running it.
+
+Docker, for the hosted HTTP server:
+
+```bash
+docker build -t aakb .
+docker run --rm -p 127.0.0.1:8080:8080 -e ANNAS_SECRET_KEY -e AAKB_HTTP_TOKEN aakb
+```
+
+Or build from a clone. No Node, no runtime dependencies:
 
 ```bash
 go build -o aakb ./cmd/aakb
 ```
-
-Go 1.27 or newer. No Node, no runtime dependencies.
 
 ## MCP
 
@@ -88,6 +105,11 @@ ANNAS_ARCHIVE_API_KEY="$(systemd-creds --user decrypt --name=ANNAS_ARCHIVE_API_K
 | `ANNAS_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |
 | `ANNAS_ACCOUNT_COOKIE` | Optional `aa_account_id2` cookie, used until it expires. |
 | `AAKB_CACHE_DIR` | Session and mirror health cache. Default `~/.cache/aakb`, mode `0700`. |
+| `OPENALEX_API_KEY` | Enables `article_read`, OpenAlex search and OpenAlex downloads. |
+| `AAKB_HTTP_TOKEN` | Bearer token that `aakb serve` requires when set. Without it, serve binds to `127.0.0.1` by default. Downloads are then readable at `/downloads/{name}` with the same token. |
+
+An optional `.env` file in the working directory is read at startup.
+Variables already in the environment always win.
 
 Logs go to stderr, so MCP stdout stays clean.
 
@@ -99,6 +121,10 @@ internal/config/       environment read once, in main
 internal/service/      unified search, dedupe, ranking and downloads over the anna client
 internal/mcpserver/    tool, prompt and annotation registration
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Checks
 

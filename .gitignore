@@ -1,0 +1,5 @@
+/aakb
+*.test
+.env
+session.json
+mirrors.json

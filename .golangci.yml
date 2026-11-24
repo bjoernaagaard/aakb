@@ -1,0 +1,120 @@
+# golangci-lint v2 configuration for the rules in skills/go-best-practices.
+# Copy it to the module root as .golangci.yml. Checked against golangci-lint 2.15 and Go 1.27.
+# modernize does not report errors.As targets, context.WithCancel in tests, or b.N loops;
+# run `go fix -diff ./...` for those. staticcheck ST1005 checks error strings, and
+# modernize reports interface{}.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    # Bugs and leaks
+    - bodyclose
+    - errcheck
+    - forcetypeassert
+    - govet
+    - ineffassign
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+    - wastedassign
+    # Errors
+    - errname
+    - errorlint
+    # Context and concurrency
+    - containedctx
+    - contextcheck
+    - fatcontext
+    - noctx
+    # API shape and style
+    - exhaustive
+    - gocritic
+    - iface
+    - recvcheck
+    - revive
+    - unconvert
+    - unparam
+    # Modern Go and the standard library
+    - exptostd
+    - modernize
+    - usestdlibvars
+    - usetesting
+    # Logging, tests, security, and suppressions
+    - gosec
+    - misspell
+    - nolintlint
+    - sloglint
+    - thelper
+
+  settings:
+    errcheck:
+      check-blank: true # forcetypeassert reports unchecked type assertions
+    exhaustive:
+      default-signifies-exhaustive: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # memory layout, not correctness
+        - shadow # flags the idiomatic `if err := f(); err != nil`
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: early-return
+        - name: error-naming
+        - name: error-return
+        - name: errorf
+        - name: exported
+        - name: flag-parameter
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    sloglint:
+      attr-only: false
+      context: scope
+      key-naming-case: snake
+      no-mixed-args: true
+      static-msg: true
+
+  exclusions:
+    # No presets: common-false-positives hides gosec G304, the check for paths from user input.
+    rules:
+      # revive's exported and flag-parameter rules are library rules; commands and private
+      # packages are application code.
+      - path: (^|/)(cmd|internal)/|^main\.go$|/main\.go$
+        linters:
+          - revive
+        text: "^(exported|package-comments|flag-parameter):"
+      - path: _test\.go
+        linters:
+          - revive
+        text: "^(flag-parameter|unused-parameter):"
+      - path: _test\.go
+        linters:
+          - containedctx
+          - errcheck
+          - forcetypeassert
+          - gosec
+          - unparam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
