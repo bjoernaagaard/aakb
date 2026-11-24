@@ -214,6 +214,16 @@ func (s *Service) Download(ctx context.Context, in DownloadInput) (*DownloadOutp
 	if hasHash == hasDOI {
 		return nil, fmt.Errorf("[INVALID_ARGUMENT] give exactly one of hash or doi")
 	}
+	if in.Title == "" {
+		// Name the file after its record instead of "untitled".
+		if hasDOI {
+			if paper, err := s.client.LookupDOI(ctx, in.DOI, timeout); err == nil {
+				in.Title = paper.Title
+			}
+		} else if d, err := s.client.Details(ctx, in.Hash, timeout); err == nil {
+			in.Title = d.Title
+		}
+	}
 	if hasDOI {
 		res, err := s.client.DownloadArticle(ctx, anna.ArticleDownloadOptions{
 			DOI: in.DOI, Title: in.Title, Format: in.Format,
