@@ -5,20 +5,19 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/bjoernaagaard/aakb/internal/service"
+	"github.com/bjoernaagaard/aakb"
+	"github.com/bjoernaagaard/aakb/internal/adapter"
 )
 
 // Version is the aakb release version reported to MCP clients.
 // Release builds inject it with -ldflags; it defaults to a dev value.
 var Version = "dev"
 
-// New returns an MCP server backed by svc. Logs go to the caller's
+// New returns an MCP server backed by client. Logs go to the caller's
 // logger, which must write to stderr so stdio stdout stays clean.
-func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
+func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aakb", Version: Version}, &mcp.ServerOptions{
 		Instructions: "Search Anna's Archive for books, papers and catalog records, " +
 			"inspect one record in full, and download a verified file. " +
@@ -32,8 +31,20 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Search Anna's Archive",
 		Description: "Search books, papers or catalog records with one tool. kind is book, article or metadata; empty auto-detects a DOI query as an article. Exact results are deduped and optionally ranked; looser suggestions come back separately in partial_matches.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.SearchInput) (*mcp.CallToolResult, *service.SearchOutput, error) {
-		out, err := svc.Search(ctx, in)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchInput) (*mcp.CallToolResult, *aakb.SearchResult, error) {
+		ctx, cancel, err := adapter.WithTimeout(ctx, "search", in.TimeoutSeconds)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer cancel()
+		out, err := client.Search(ctx, aakb.SearchRequest{
+			Kind: adapter.SearchKind(in.Kind, in.Provider), WorkType: in.WorkType,
+			Query: in.Query, Title: in.Title, Author: in.Author, Publisher: in.Publisher, Year: in.Year,
+			Formats: adapter.SplitList(in.Format), Languages: adapter.SplitList(in.Language),
+			Sources: adapter.SplitList(in.Source), Content: adapter.SplitList(in.Content),
+			Sort: aakb.Sort(in.Sort), Page: in.Page, Limit: in.Limit, Rank: in.Rank,
+			IncludeStats: in.IncludeStats, DownloadableOnly: in.DownloadableOnly, SearchDescriptions: in.SearchDescriptions,
+		})
 		return nil, out, err
 	})
 
@@ -42,9 +53,14 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Get record details",
 		Description: "Full record for one hash, /md5/ URL, DOI or catalog id: identifiers, edition, description, subjects, reported file problems and a better copy's hash when the archive knows one.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.DetailsInput) (*mcp.CallToolResult, *service.DetailsOutput, error) {
-		d, err := svc.Details(ctx, in)
-		return nil, d, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in detailsInput) (*mcp.CallToolResult, *aakb.RecordDetails, error) {
+		ctx, cancel, err := adapter.WithTimeout(ctx, "details", in.TimeoutSeconds)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer cancel()
+		out, err := client.Details(ctx, in.ID)
+		return nil, out, err
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -52,9 +68,18 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Read a paper's full text",
 		Description: "Bounded passages of OpenAlex structured full text with provenance and a continuation token. Needs OPENALEX_API_KEY. Abstract-only results say so instead of pretending to be full text.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.ReadInput) (*mcp.CallToolResult, *papers.ReadResult, error) {
-		out, err := svc.Read(ctx, in)
-		return nil, out, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in readInput) (*mcp.CallToolResult, *adapter.ArticleOutput, error) {
+		ctx, cancel, err := adapter.WithTimeout(ctx, "read", in.TimeoutSeconds)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer cancel()
+		req := aakb.ReadRequest{ID: in.ID, Continuation: in.Continuation, Limit: in.Limit}
+		out, err := client.ReadArticle(ctx, req)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, adapter.ArticleResponse(req, out), nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -62,8 +87,15 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Download a verified file",
 		Description: "Download one file by MD5 hash or by paper DOI. The file is checked against its MD5, a matching local file is reused without a new request, and an existing file is never overwritten.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.DownloadInput) (*mcp.CallToolResult, *service.DownloadOutput, error) {
-		out, err := svc.Download(ctx, in)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in downloadInput) (*mcp.CallToolResult, *aakb.DownloadResult, error) {
+		ctx, cancel, err := adapter.WithTimeout(ctx, "download", in.TimeoutSeconds)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer cancel()
+		out, err := client.Download(ctx, aakb.DownloadRequest{
+			Hash: in.Hash, DOI: in.DOI, OpenAlexID: in.OpenAlexID, Title: in.Title, Format: in.Format,
+		})
 		return nil, out, err
 	})
 
@@ -72,9 +104,14 @@ func New(svc *service.Service, logger *slog.Logger) *mcp.Server {
 		Title:       "Account status",
 		Description: "Membership, whether this membership may search, and remaining fast downloads in the current rolling window.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in service.AccountInput) (*mcp.CallToolResult, *anna.AccountStatus, error) {
-		st, err := svc.Account(ctx, in)
-		return nil, st, err
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in accountInput) (*mcp.CallToolResult, *aakb.Account, error) {
+		ctx, cancel, err := adapter.WithTimeout(ctx, "account", in.TimeoutSeconds)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer cancel()
+		out, err := client.AccountStatus(ctx)
+		return nil, out, err
 	})
 
 	server.AddPrompt(&mcp.Prompt{

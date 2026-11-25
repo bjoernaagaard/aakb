@@ -24,9 +24,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bjoernaagaard/aakb"
+	"github.com/bjoernaagaard/aakb/internal/adapter"
 	"github.com/bjoernaagaard/aakb/internal/config"
 	"github.com/bjoernaagaard/aakb/internal/mcpserver"
-	"github.com/bjoernaagaard/aakb/internal/service"
 )
 
 func main() {
@@ -62,31 +63,33 @@ func run() error {
 		return nil
 	}
 
-	svc, err := service.New(cfg, logger)
+	clientConfig := cfg.Client()
+	clientConfig.Logger = logger
+	client, err := aakb.New(clientConfig)
 	if err != nil {
 		return err
 	}
 
 	switch cmd {
 	case "mcp":
-		server := mcpserver.New(svc, logger)
+		server := mcpserver.New(client, logger)
 		logger.Info("aakb serving MCP over stdio", "version", mcpserver.Version)
 		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 			return fmt.Errorf("serve stdio: %w", err)
 		}
 		return nil
 	case "serve":
-		return serveHTTP(ctx, svc, cfg, logger, args)
+		return serveHTTP(ctx, client, cfg, logger, args)
 	case "search":
-		return cliSearch(ctx, svc, args)
+		return cliSearch(ctx, client, args)
 	case "details":
-		return cliDetails(ctx, svc, args)
+		return cliDetails(ctx, client, args)
 	case "download":
-		return cliDownload(ctx, svc, args)
+		return cliDownload(ctx, client, args)
 	case "read":
-		return cliRead(ctx, svc, args)
+		return cliRead(ctx, client, args)
 	case "account":
-		out, err := svc.Account(ctx, service.AccountInput{})
+		out, err := client.AccountStatus(ctx)
 		return printJSON(out, err)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
@@ -126,14 +129,14 @@ func (r *rateLimiter) allow(ip string) bool {
 	return true
 }
 
-func serveHTTP(ctx context.Context, svc *service.Service, cfg config.Config, logger *slog.Logger, args []string) error {
+func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		return mcpserver.New(svc, logger)
+		return mcpserver.New(client, logger)
 	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, Logger: logger})
 
 	limiter := &rateLimiter{hits: make(map[string][]time.Time)}
@@ -159,14 +162,14 @@ func serveHTTP(ctx context.Context, svc *service.Service, cfg config.Config, log
 	mux.Handle("/mcp", auth(handler))
 	mux.Handle("GET /downloads/{name}", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := filepath.Base(r.PathValue("name"))
-		http.ServeFile(w, r, filepath.Join(svc.DownloadPath, name))
+		http.ServeFile(w, r, filepath.Join(client.DownloadDir(), name))
 	})))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("upstream") == "1" {
 			probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
-			status, code := svc.UpstreamReachable(probeCtx)
+			status, code := upstreamReachable(probeCtx, cfg.BaseURL)
 			_, _ = fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, status, code) //nolint:errcheck // health response
 			return
 		}
@@ -195,7 +198,7 @@ func serveHTTP(ctx context.Context, svc *service.Service, cfg config.Config, log
 	return nil
 }
 
-func cliSearch(ctx context.Context, svc *service.Service, args []string) error {
+func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	kind := fs.String("kind", "", "book, article, metadata or openalex")
 	provider := fs.String("provider", "", "openalex")
@@ -219,18 +222,23 @@ func cliSearch(ctx context.Context, svc *service.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	out, err := svc.Search(ctx, service.SearchInput{
-		Kind: *kind, Provider: *provider, WorkType: *workType,
+	ctx, cancel, err := adapter.WithTimeout(ctx, "search", *timeout)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	out, err := client.Search(ctx, aakb.SearchRequest{
+		Kind: adapter.SearchKind(*kind, *provider), WorkType: *workType,
 		Query: strings.Join(fs.Args(), " "), Title: *title, Author: *author,
-		Publisher: *publisher, Year: *year, Format: *format, Language: *language,
-		Source: *source, Content: *content, Sort: *sortBy, Page: *page,
-		Limit: *limit, TimeoutSeconds: *timeout, Rank: *rank, IncludeStats: *stats,
+		Publisher: *publisher, Year: *year, Formats: adapter.SplitList(*format), Languages: adapter.SplitList(*language),
+		Sources: adapter.SplitList(*source), Content: adapter.SplitList(*content), Sort: aakb.Sort(*sortBy), Page: *page,
+		Limit: *limit, Rank: *rank, IncludeStats: *stats,
 		DownloadableOnly: *downloadable, SearchDescriptions: *descriptions,
 	})
 	return printJSON(out, err)
 }
 
-func cliDetails(ctx context.Context, svc *service.Service, args []string) error {
+func cliDetails(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("details", flag.ContinueOnError)
 	timeout := fs.Int("timeout", 0, "timeout in seconds")
 	if err := fs.Parse(args); err != nil {
@@ -239,14 +247,19 @@ func cliDetails(ctx context.Context, svc *service.Service, args []string) error 
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: aakb details [-timeout 60] <hash|doi|catalog-id>")
 	}
-	out, err := svc.Details(ctx, service.DetailsInput{ID: fs.Arg(0), TimeoutSeconds: *timeout})
+	ctx, cancel, err := adapter.WithTimeout(ctx, "details", *timeout)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	out, err := client.Details(ctx, fs.Arg(0))
 	return printJSON(out, err)
 }
 
-func cliRead(ctx context.Context, svc *service.Service, args []string) error {
+func cliRead(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
 	continuation := fs.String("continuation", "", "continuation token")
-	limit := fs.Int("limit", 0, "max passages")
+	limit := fs.Int("limit", 0, "character budget")
 	timeout := fs.Int("timeout", 0, "timeout in seconds")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -254,11 +267,20 @@ func cliRead(ctx context.Context, svc *service.Service, args []string) error {
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: aakb read [-continuation t] <openalex-id|doi>")
 	}
-	out, err := svc.Read(ctx, service.ReadInput{ID: fs.Arg(0), Continuation: *continuation, Limit: *limit, TimeoutSeconds: *timeout})
-	return printJSON(out, err)
+	ctx, cancel, err := adapter.WithTimeout(ctx, "read", *timeout)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	req := aakb.ReadRequest{ID: fs.Arg(0), Continuation: *continuation, Limit: *limit}
+	out, err := client.ReadArticle(ctx, req)
+	if err != nil {
+		return err
+	}
+	return printJSON(adapter.ArticleResponse(req, out), nil)
 }
 
-func cliDownload(ctx context.Context, svc *service.Service, args []string) error {
+func cliDownload(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("download", flag.ContinueOnError)
 	hash := fs.String("hash", "", "MD5 hash or /md5/ URL")
 	doi := fs.String("doi", "", "paper DOI")
@@ -269,7 +291,12 @@ func cliDownload(ctx context.Context, svc *service.Service, args []string) error
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	out, err := svc.Download(ctx, service.DownloadInput{Hash: *hash, DOI: *doi, OpenAlexID: *openalex, Title: *title, Format: *format, TimeoutSeconds: *timeout})
+	ctx, cancel, err := adapter.WithTimeout(ctx, "download", *timeout)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	out, err := client.Download(ctx, aakb.DownloadRequest{Hash: *hash, DOI: *doi, OpenAlexID: *openalex, Title: *title, Format: *format})
 	return printJSON(out, err)
 }
 

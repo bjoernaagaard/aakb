@@ -88,6 +88,34 @@ The same operations without an MCP client, JSON on stdout:
 ./aakb account
 ```
 
+## Go library
+
+Import `github.com/bjoernaagaard/aakb` to use the same operations as the CLI
+and MCP server. Pass credentials in `aakb.Config`. A client can be shared
+by concurrent callers.
+
+```go
+import (
+	"context"
+
+	"github.com/bjoernaagaard/aakb"
+)
+
+func search(ctx context.Context, key string) (*aakb.SearchResult, error) {
+	client, err := aakb.New(aakb.Config{SecretKey: key})
+	if err != nil {
+		return nil, err
+	}
+	return client.Search(ctx, aakb.SearchRequest{
+		Kind: aakb.KindBook, Query: "Pride and Prejudice", Rank: true,
+	})
+}
+```
+
+Set a deadline on the context to control how long an operation can run.
+Without a caller deadline, operations have 60 seconds and downloads have
+30 minutes. Use `aakb.CodeOf(err)` to check the error category.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -118,8 +146,8 @@ Logs go to stderr, so MCP stdout stays clean.
 ```text
 cmd/aakb/              entrypoint: MCP stdio, MCP HTTP and CLI dispatch
 internal/config/       environment read once, in main
-internal/service/      unified search, dedupe, ranking and downloads over the anna client
 internal/mcpserver/    tool, prompt and annotation registration
+./                     public Go library shared by the CLI and MCP server
 ```
 
 ## License

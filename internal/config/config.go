@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/bjoernaagaard/aakb"
 )
 
 // Config holds the settings shared by the MCP server and the CLI.
@@ -26,7 +28,7 @@ type Config struct {
 // LogValue redacts credentials so a Config can never leak through a log line.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("base_url", c.BaseURL),
+		slog.Bool("base_url_set", c.BaseURL != ""),
 		slog.Bool("auto_base_url", c.AutoBaseURL),
 		slog.String("download_path", c.DownloadPath),
 		slog.String("cache_dir", c.CacheDir),
@@ -39,30 +41,24 @@ func (c Config) LogValue() slog.Value {
 // the existing Anna's Archive tools, plus AAKB_CACHE_DIR.
 func FromEnv() (Config, error) {
 	loadDotEnv(".env")
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Config{}, fmt.Errorf("home directory: %w", err)
-	}
 	cacheDir := os.Getenv("AAKB_CACHE_DIR")
 	if cacheDir == "" {
 		cacheDir = os.Getenv("ANNAS_MCP_CACHE_DIR")
 	}
-	if cacheDir == "" {
-		base, err := os.UserCacheDir()
+	downloadPath := os.Getenv("ANNAS_DOWNLOAD_PATH")
+	if downloadPath == "~" || strings.HasPrefix(downloadPath, "~/") {
+		home, err := os.UserHomeDir()
 		if err != nil {
-			return Config{}, fmt.Errorf("cache directory: %w", err)
+			return Config{}, fmt.Errorf("home directory: %w", err)
 		}
-		cacheDir = filepath.Join(base, "aakb")
-	}
-	downloadPath := expandHome(os.Getenv("ANNAS_DOWNLOAD_PATH"), home)
-	if downloadPath == "" {
-		downloadPath = filepath.Join(home, "annas-archive")
+		downloadPath = expandHome(downloadPath, home)
 	}
 	auto := true
 	if v := os.Getenv("ANNAS_AUTO_BASE_URL"); v != "" {
+		var err error
 		auto, err = strconv.ParseBool(v)
 		if err != nil {
-			return Config{}, fmt.Errorf("ANNAS_AUTO_BASE_URL: %w", err)
+			return Config{}, fmt.Errorf("ANNAS_AUTO_BASE_URL must be a boolean")
 		}
 	}
 	secretKey := os.Getenv("ANNAS_SECRET_KEY")
@@ -82,9 +78,16 @@ func FromEnv() (Config, error) {
 	}, nil
 }
 
-// SessionFile returns the persisted session path inside the cache dir.
-func (c Config) SessionFile() string {
-	return filepath.Join(c.CacheDir, "session.json")
+// Client returns the provider configuration for the public library.
+func (c Config) Client() aakb.Config {
+	mirror := aakb.MirrorFailover
+	if !c.AutoBaseURL {
+		mirror = aakb.MirrorFixed
+	}
+	return aakb.Config{
+		SecretKey: c.SecretKey, AccountCookie: c.AccountCookie, BaseURL: c.BaseURL, Mirror: mirror,
+		DownloadDir: c.DownloadPath, CacheDir: c.CacheDir, OpenAlexKey: c.OpenAlexKey,
+	}
 }
 
 func expandHome(path, home string) string {
