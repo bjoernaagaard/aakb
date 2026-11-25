@@ -3,3 +3,7 @@
 .env
 session.json
 mirrors.json
+/dist/
+*.out
+.env.*
+.DS_Store

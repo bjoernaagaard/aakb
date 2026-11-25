@@ -34,7 +34,9 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 		return fmt.Errorf("listen for HTTP: %w", err)
 	}
 	boundAddr := listener.Addr().String()
-	api := httpapi.New(client, httpapi.Options{Token: cfg.HTTPToken, Addr: boundAddr, Version: version()}, logger)
+	api := httpapi.New(client, httpapi.Options{
+		Token: cfg.HTTPToken, Addr: boundAddr, Version: version(), TrustedProxies: cfg.TrustedProxies,
+	}, logger)
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", api.Guard(handler))
 	ui := api.PublicUI(webui.Handler())
@@ -46,15 +48,20 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 			probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
 			status, code := upstreamReachable(probeCtx, cfg.BaseURL)
-			_, _ = fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, status, code) //nolint:errcheck // health response
+			if _, err := fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, status, code); err != nil {
+				logger.WarnContext(r.Context(), "health response not written", "error", err)
+			}
 			return
 		}
-		_, _ = w.Write([]byte(`{"ok":true}`)) //nolint:errcheck // health response
+		if _, err := w.Write([]byte(`{"ok":true}`)); err != nil {
+			logger.WarnContext(r.Context(), "health response not written", "error", err)
+		}
 	})
 	srv := &http.Server{
 		Addr:              boundAddr,
 		Handler:           httpapi.Protect(api.Routes(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
 		WriteTimeout:      40 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -64,7 +71,9 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx) //nolint:errcheck,contextcheck // parent ctx is already cancelled; shutdown needs a fresh deadline
+		if err := srv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // parent ctx is already cancelled; shutdown needs a fresh deadline
+			logger.Warn("HTTP shutdown did not finish cleanly", "error", err) //nolint:sloglint // the request context is already cancelled
+		}
 	}()
 	logger.InfoContext(ctx, "aakb serving the web UI, REST and MCP over HTTP", "addr", boundAddr, "auth", cfg.HTTPToken != "")
 	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {

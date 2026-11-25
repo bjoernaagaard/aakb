@@ -4,6 +4,8 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +25,9 @@ type Config struct {
 	CacheDir      string
 	OpenAlexKey   string
 	HTTPToken     string
+	// TrustedProxies holds the proxy networks whose X-Forwarded-For
+	// header aakb serve believes when it counts requests per client.
+	TrustedProxies []netip.Prefix
 }
 
 // LogValue redacts credentials so a Config can never leak through a log line.
@@ -40,6 +45,7 @@ func (c Config) LogValue() slog.Value {
 // FromEnv builds a Config from ANNAS_* variables, for compatibility with
 // the existing Anna's Archive tools, plus AAKB_CACHE_DIR.
 func FromEnv() (Config, error) {
+	loadDotEnv(".env.local")
 	loadDotEnv(".env")
 	cacheDir := os.Getenv("AAKB_CACHE_DIR")
 	if cacheDir == "" {
@@ -63,18 +69,27 @@ func FromEnv() (Config, error) {
 	}
 	secretKey := os.Getenv("ANNAS_SECRET_KEY")
 	if secretKey == "" {
-		// Homelab stores this credential as ANNAS_ARCHIVE_API_KEY.
+		// Some credential stores name the same key ANNAS_ARCHIVE_API_KEY.
 		secretKey = os.Getenv("ANNAS_ARCHIVE_API_KEY")
 	}
+	baseURL := os.Getenv("ANNAS_BASE_URL")
+	if err := checkTLD(baseURL, os.Getenv("ANNAS_ALLOWED_TLDS")); err != nil {
+		return Config{}, err
+	}
+	proxies, err := parsePrefixes(os.Getenv("AAKB_TRUSTED_PROXIES"))
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
-		SecretKey:     secretKey,
-		AccountCookie: os.Getenv("ANNAS_ACCOUNT_COOKIE"),
-		BaseURL:       os.Getenv("ANNAS_BASE_URL"),
-		AutoBaseURL:   auto,
-		DownloadPath:  downloadPath,
-		CacheDir:      cacheDir,
-		OpenAlexKey:   os.Getenv("OPENALEX_API_KEY"),
-		HTTPToken:     os.Getenv("AAKB_HTTP_TOKEN"),
+		TrustedProxies: proxies,
+		SecretKey:      secretKey,
+		AccountCookie:  os.Getenv("ANNAS_ACCOUNT_COOKIE"),
+		BaseURL:        baseURL,
+		AutoBaseURL:    auto,
+		DownloadPath:   downloadPath,
+		CacheDir:       cacheDir,
+		OpenAlexKey:    os.Getenv("OPENALEX_API_KEY"),
+		HTTPToken:      os.Getenv("AAKB_HTTP_TOKEN"),
 	}, nil
 }
 
@@ -88,6 +103,46 @@ func (c Config) Client() aakb.Config {
 		SecretKey: c.SecretKey, AccountCookie: c.AccountCookie, BaseURL: c.BaseURL, Mirror: mirror,
 		DownloadDir: c.DownloadPath, CacheDir: c.CacheDir, OpenAlexKey: c.OpenAlexKey,
 	}
+}
+
+// checkTLD rejects a mirror whose top-level domain is missing from a
+// non-empty comma-separated allowlist such as "gl,gd,pk".
+func checkTLD(baseURL, allowed string) error {
+	if baseURL == "" || strings.TrimSpace(allowed) == "" {
+		return nil
+	}
+	host := baseURL
+	if u, err := url.Parse(baseURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	tld := strings.ToLower(host[strings.LastIndex(host, ".")+1:])
+	for part := range strings.SplitSeq(allowed, ",") {
+		if strings.ToLower(strings.TrimPrefix(strings.TrimSpace(part), ".")) == tld {
+			return nil
+		}
+	}
+	return fmt.Errorf("ANNAS_BASE_URL has a top-level domain outside ANNAS_ALLOWED_TLDS")
+}
+
+// parsePrefixes reads comma-separated addresses or CIDR networks.
+func parsePrefixes(list string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for part := range strings.SplitSeq(list, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(part)
+			if addrErr != nil {
+				return nil, fmt.Errorf("AAKB_TRUSTED_PROXIES must list IP addresses or CIDR networks")
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
 }
 
 func expandHome(path, home string) string {

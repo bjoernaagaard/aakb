@@ -4,6 +4,7 @@ package mcpserver
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -29,8 +30,15 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
 		Title:       "Search Anna's Archive",
-		Description: "Search books, papers or catalog records with one tool. kind is book, article or metadata; empty auto-detects a DOI query as an article. Exact results are deduped and optionally ranked; looser suggestions come back separately in partial_matches.",
+		Description: "Search books, papers or catalog records with one tool. kind is book, article, metadata or openalex; empty auto-detects a DOI query as an article. Exact results are deduped and optionally ranked; looser suggestions come back separately in partial_matches.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
+		InputSchema: inputSchema[searchInput](map[string]limits{
+			"kind":            {enum: []any{"", "book", "article", "metadata", "openalex"}},
+			"sort":            {enum: []any{"", "relevance", "newest", "oldest", "largest", "smallest", "newest_added", "oldest_added", "random", "most_cited"}},
+			"limit":           {min: 1, max: 50},
+			"page":            {min: 1, max: 100000},
+			"timeout_seconds": {min: 0, max: 600},
+		}),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchInput) (*mcp.CallToolResult, *aakb.SearchResult, error) {
 		ctx, cancel, err := adapter.WithTimeout(ctx, "search", in.TimeoutSeconds)
 		if err != nil {
@@ -44,6 +52,10 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 			Sources: adapter.SplitList(in.Source), Content: adapter.SplitList(in.Content),
 			Sort: aakb.Sort(in.Sort), Page: in.Page, Limit: in.Limit, Rank: in.Rank,
 			IncludeStats: in.IncludeStats, DownloadableOnly: in.DownloadableOnly, SearchDescriptions: in.SearchDescriptions,
+			OpenAlex: aakb.OpenAlexFilter{
+				AuthorID: in.AuthorID, InstitutionID: in.InstitutionID, RepositoryID: in.RepositoryID,
+				Relation: in.Relation, WorkID: in.WorkID,
+			},
 		})
 		return nil, out, err
 	})
@@ -51,8 +63,9 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_details",
 		Title:       "Get record details",
-		Description: "Full record for one hash, /md5/ URL, DOI or catalog id: identifiers, edition, description, subjects, reported file problems and a better copy's hash when the archive knows one.",
+		Description: "Full record for one hash, /md5/ URL, DOI, catalog id or OpenAlex work id: identifiers, edition, description, subjects, reported file problems and a better copy's hash when the archive knows one.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
+		InputSchema: inputSchema[detailsInput](timeoutLimit(600)),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in detailsInput) (*mcp.CallToolResult, *aakb.RecordDetails, error) {
 		ctx, cancel, err := adapter.WithTimeout(ctx, "details", in.TimeoutSeconds)
 		if err != nil {
@@ -68,6 +81,10 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 		Title:       "Read a paper's full text",
 		Description: "Bounded passages of OpenAlex structured full text with provenance and a continuation token. Needs OPENALEX_API_KEY. Abstract-only results say so instead of pretending to be full text.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
+		InputSchema: inputSchema[readInput](map[string]limits{
+			"limit":           {min: 0, max: 16000},
+			"timeout_seconds": {min: 0, max: 600},
+		}),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in readInput) (*mcp.CallToolResult, *adapter.ArticleOutput, error) {
 		ctx, cancel, err := adapter.WithTimeout(ctx, "read", in.TimeoutSeconds)
 		if err != nil {
@@ -85,9 +102,10 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "download",
 		Title:       "Download a verified file",
-		Description: "Download one file by MD5 hash or by paper DOI. The file is checked against its MD5, a matching local file is reused without a new request, and an existing file is never overwritten.",
+		Description: "Download one file by MD5 hash, paper DOI or OpenAlex work id. Sends progress notifications when the call carries a progress token. The file is checked against its MD5, a matching local file is reused without a new request, and an existing file is never overwritten.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(true)},
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in downloadInput) (*mcp.CallToolResult, *aakb.DownloadResult, error) {
+		InputSchema: inputSchema[downloadInput](timeoutLimit(7200)),
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in downloadInput) (*mcp.CallToolResult, *aakb.DownloadResult, error) {
 		ctx, cancel, err := adapter.WithTimeout(ctx, "download", in.TimeoutSeconds)
 		if err != nil {
 			return nil, nil, err
@@ -95,6 +113,8 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 		defer cancel()
 		out, err := client.Download(ctx, aakb.DownloadRequest{
 			Hash: in.Hash, DOI: in.DOI, OpenAlexID: in.OpenAlexID, Title: in.Title, Format: in.Format,
+			Artifact: in.Artifact, LocationID: in.LocationID, Version: in.Version,
+			Progress: progressNotifier(ctx, req, logger),
 		})
 		return nil, out, err
 	})
@@ -104,6 +124,7 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 		Title:       "Account status",
 		Description: "Membership, whether this membership may search, and remaining fast downloads in the current rolling window.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
+		InputSchema: inputSchema[accountInput](timeoutLimit(600)),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in accountInput) (*mcp.CallToolResult, *aakb.Account, error) {
 		ctx, cancel, err := adapter.WithTimeout(ctx, "account", in.TimeoutSeconds)
 		if err != nil {
@@ -140,6 +161,29 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	})
 
 	return server
+}
+
+// progressNotifier reports transfer progress to a client that sent a
+// progress token: once at the start, then at most once a second.
+func progressNotifier(ctx context.Context, req *mcp.CallToolRequest, logger *slog.Logger) func(done, total int64) {
+	token := req.Params.GetProgressToken()
+	if token == nil || req.Session == nil {
+		return nil
+	}
+	var last time.Time
+	return func(done, total int64) {
+		now := time.Now()
+		if done != total && now.Sub(last) < time.Second {
+			return
+		}
+		last = now
+		err := req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+			ProgressToken: token, Progress: float64(done), Total: float64(total), Message: "downloading",
+		})
+		if err != nil {
+			logger.DebugContext(ctx, "progress notification not sent", "error", err)
+		}
+	}
 }
 
 func ternary(ok bool, a, b string) string {

@@ -9,10 +9,16 @@ import (
 )
 
 // DownloadRequest selects exactly one of Hash, DOI, and OpenAlexID.
-// Title and Format control the filename.
+// Title and Format control the filename. Artifact ("pdf" or "tei_xml"),
+// LocationID and Version ("published", "accepted" or "submitted") choose
+// among the copies of an OpenAlex work and need OpenAlexID. Progress, when
+// set, is called from the downloading goroutine with the bytes written and
+// the total, which is zero when the server does not report a size.
 type DownloadRequest struct {
-	Hash, DOI, OpenAlexID string
-	Title, Format         string
+	Hash, DOI, OpenAlexID         string
+	Title, Format                 string
+	Artifact, LocationID, Version string
+	Progress                      func(done, total int64)
 }
 
 // Verification describes the digest evidence for a downloaded file.
@@ -60,11 +66,18 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 	if given != 1 {
 		return nil, newError(op, CodeInvalidArgument, "give exactly one of hash, doi or openalex_id")
 	}
+	progress := anna.ProgressFunc(req.Progress)
+	if req.OpenAlexID == "" && strings.TrimSpace(req.Artifact+req.LocationID+req.Version) != "" {
+		return nil, newError(op, CodeInvalidArgument, "artifact, location_id and version need openalex_id")
+	}
 	if req.OpenAlexID != "" {
 		if c.papers == nil {
 			return nil, newError(op, CodeConfig, "OpenAlexKey is required for an OpenAlex download")
 		}
-		res, err := c.papers.Download(ctx, papers.DownloadOptions{OpenAlexID: req.OpenAlexID, Title: req.Title, Format: req.Format}, nil)
+		res, err := c.papers.Download(ctx, papers.DownloadOptions{
+			OpenAlexID: req.OpenAlexID, Title: req.Title, Format: req.Format,
+			Artifact: req.Artifact, LocationID: req.LocationID, Version: req.Version,
+		}, progress)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
@@ -91,16 +104,16 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 	}
 	article := anna.ArticleDownloadOptions{Hash: req.Hash, DOI: req.DOI, Title: req.Title, Format: req.Format}
 	if req.DOI != "" {
-		res, err := c.archive.DownloadArticle(ctx, article, 0, nil)
+		res, err := c.archive.DownloadArticle(ctx, article, 0, progress)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
 		return downloadResult(res), nil
 	}
-	res, err := c.archive.DownloadBook(ctx, &anna.Book{Hash: req.Hash, Title: req.Title, Format: req.Format}, 0, nil)
+	res, err := c.archive.DownloadBook(ctx, &anna.Book{Hash: req.Hash, Title: req.Title, Format: req.Format}, 0, progress)
 	failure := classify(ctx, op, err)
 	if CodeOf(failure) == CodeNotFound {
-		fallback, fallbackErr := c.archive.DownloadArticle(ctx, article, 0, nil)
+		fallback, fallbackErr := c.archive.DownloadArticle(ctx, article, 0, progress)
 		if err := classify(ctx, op, nil); err != nil {
 			return nil, err
 		}

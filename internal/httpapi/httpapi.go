@@ -4,6 +4,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/bjoernaagaard/aakb"
@@ -17,6 +18,9 @@ type Options struct {
 	Token   string
 	Addr    string
 	Version string
+	// TrustedProxies lists the networks whose X-Forwarded-For header
+	// names the client for rate limiting.
+	TrustedProxies []netip.Prefix
 }
 
 // API serves the REST resources and completed files.

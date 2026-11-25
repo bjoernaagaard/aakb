@@ -27,9 +27,57 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "aakb:", err)
+		if failure, ok := errors.AsType[*jsonError](err); ok {
+			printJSONError(failure.err)
+		} else {
+			fmt.Fprintln(os.Stderr, "aakb:", err)
+		}
 		os.Exit(1)
 	}
+}
+
+// jsonError marks an error that the caller asked to read as JSON.
+type jsonError struct{ err error }
+
+func (f *jsonError) Error() string { return f.err.Error() }
+func (f *jsonError) Unwrap() error { return f.err }
+
+// common holds the flags every one-shot subcommand accepts.
+type common struct {
+	timeout    *int
+	jsonErrors *bool
+}
+
+func commonFlags(fs *flag.FlagSet) common {
+	return common{
+		timeout:    fs.Int("timeout", 0, "timeout in seconds, at most 600, or 7200 for download"),
+		jsonErrors: fs.Bool("json-errors", false, "print a failure on stderr as one JSON object"),
+	}
+}
+
+// report prints out, or returns err in the form the flags asked for.
+func (c common) report(out any, err error) error {
+	if err = printJSON(out, err); err != nil && *c.jsonErrors {
+		return &jsonError{err: err}
+	}
+	return err
+}
+
+func printJSONError(err error) {
+	failure := struct {
+		Code    string `json:"code"`
+		Op      string `json:"op,omitempty"`
+		Message string `json:"message"`
+	}{Code: string(aakb.CodeInternal), Message: err.Error()}
+	if libErr, ok := errors.AsType[*aakb.Error](err); ok {
+		failure.Code, failure.Op, failure.Message = string(libErr.Code), libErr.Op, libErr.Message
+	}
+	data, marshalErr := json.Marshal(failure)
+	if marshalErr != nil {
+		fmt.Fprintln(os.Stderr, "aakb:", err)
+		return
+	}
+	fmt.Fprintln(os.Stderr, string(data))
 }
 
 func run() error {
@@ -54,8 +102,10 @@ func run() error {
 		fmt.Print(usage)
 		return nil
 	case "version", "--version":
-		fmt.Println("aakb", version())
+		fmt.Println(strings.TrimSpace("aakb " + version() + " " + buildDetail()))
 		return nil
+	case "health":
+		return cliHealth(ctx, args)
 	}
 
 	clientConfig := cfg.Client()
@@ -84,8 +134,7 @@ func run() error {
 	case "read":
 		return cliRead(ctx, client, args)
 	case "account":
-		out, err := client.AccountStatus(ctx)
-		return printJSON(out, err)
+		return cliAccount(ctx, client, args)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}
@@ -99,6 +148,42 @@ func version() string {
 		return info.Main.Version
 	}
 	return "dev"
+}
+
+// buildDetail reports the commit and commit time stamped into the binary.
+func buildDetail() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	var revision, when string
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value[:min(len(setting.Value), 12)]
+		case "vcs.time":
+			when = setting.Value
+		}
+	}
+	if revision == "" {
+		return ""
+	}
+	return strings.TrimSpace("commit " + revision + " " + when)
+}
+
+func cliAccount(ctx context.Context, client *aakb.Client, args []string) error {
+	fs := flag.NewFlagSet("account", flag.ContinueOnError)
+	flags := commonFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel, err := adapter.WithTimeout(ctx, "account", *flags.timeout)
+	if err != nil {
+		return flags.report(nil, err)
+	}
+	defer cancel()
+	out, err := client.AccountStatus(ctx)
+	return flags.report(out, err)
 }
 
 func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
@@ -117,7 +202,12 @@ func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 	year := fs.String("year", "", "publication year")
 	page := fs.Int("page", 1, "result page")
 	limit := fs.Int("limit", 10, "max results")
-	timeout := fs.Int("timeout", 0, "timeout in seconds")
+	authorID := fs.String("author-id", "", "OpenAlex author id")
+	institutionID := fs.String("institution-id", "", "OpenAlex institution id")
+	repositoryID := fs.String("repository-id", "", "OpenAlex repository id")
+	relation := fs.String("relation", "", "citing, references or related, with -work-id")
+	workID := fs.String("work-id", "", "OpenAlex work id for -relation")
+	flags := commonFlags(fs)
 	rank := fs.Bool("rank", true, "rank exact results")
 	stats := fs.Bool("stats", false, "include download and quality counts")
 	downloadable := fs.Bool("downloadable-only", false, "only downloadable results")
@@ -125,9 +215,9 @@ func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ctx, cancel, err := adapter.WithTimeout(ctx, "search", *timeout)
+	ctx, cancel, err := adapter.WithTimeout(ctx, "search", *flags.timeout)
 	if err != nil {
-		return err
+		return flags.report(nil, err)
 	}
 	defer cancel()
 	out, err := client.Search(ctx, aakb.SearchRequest{
@@ -137,50 +227,54 @@ func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 		Sources: adapter.SplitList(*source), Content: adapter.SplitList(*content), Sort: aakb.Sort(*sortBy), Page: *page,
 		Limit: *limit, Rank: *rank, IncludeStats: *stats,
 		DownloadableOnly: *downloadable, SearchDescriptions: *descriptions,
+		OpenAlex: aakb.OpenAlexFilter{
+			AuthorID: *authorID, InstitutionID: *institutionID, RepositoryID: *repositoryID,
+			Relation: *relation, WorkID: *workID,
+		},
 	})
-	return printJSON(out, err)
+	return flags.report(out, err)
 }
 
 func cliDetails(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("details", flag.ContinueOnError)
-	timeout := fs.Int("timeout", 0, "timeout in seconds")
+	flags := commonFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: aakb details [-timeout 60] <hash|doi|catalog-id>")
+		return fmt.Errorf("usage: aakb details [-timeout 60] <hash|doi|catalog-id|openalex-id>")
 	}
-	ctx, cancel, err := adapter.WithTimeout(ctx, "details", *timeout)
+	ctx, cancel, err := adapter.WithTimeout(ctx, "details", *flags.timeout)
 	if err != nil {
-		return err
+		return flags.report(nil, err)
 	}
 	defer cancel()
 	out, err := client.Details(ctx, fs.Arg(0))
-	return printJSON(out, err)
+	return flags.report(out, err)
 }
 
 func cliRead(ctx context.Context, client *aakb.Client, args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
 	continuation := fs.String("continuation", "", "continuation token")
 	limit := fs.Int("limit", 0, "character budget")
-	timeout := fs.Int("timeout", 0, "timeout in seconds")
+	flags := commonFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: aakb read [-continuation t] <openalex-id|doi>")
 	}
-	ctx, cancel, err := adapter.WithTimeout(ctx, "read", *timeout)
+	ctx, cancel, err := adapter.WithTimeout(ctx, "read", *flags.timeout)
 	if err != nil {
-		return err
+		return flags.report(nil, err)
 	}
 	defer cancel()
 	req := aakb.ReadRequest{ID: fs.Arg(0), Continuation: *continuation, Limit: *limit}
 	out, err := client.ReadArticle(ctx, req)
 	if err != nil {
-		return err
+		return flags.report(nil, err)
 	}
-	return printJSON(adapter.ArticleResponse(req, out), nil)
+	return flags.report(adapter.ArticleResponse(req, out), nil)
 }
 
 func cliDownload(ctx context.Context, client *aakb.Client, args []string) error {
@@ -190,17 +284,53 @@ func cliDownload(ctx context.Context, client *aakb.Client, args []string) error 
 	openalex := fs.String("openalex-id", "", "OpenAlex work id")
 	title := fs.String("title", "", "filename title")
 	format := fs.String("format", "", "file extension")
-	timeout := fs.Int("timeout", 0, "timeout in seconds")
+	artifact := fs.String("artifact", "", "pdf or tei_xml, with -openalex-id")
+	location := fs.String("location-id", "", "OpenAlex location id, with -openalex-id")
+	fileVersion := fs.String("version", "", "published, accepted or submitted, with -openalex-id")
+	quiet := fs.Bool("quiet", false, "print no progress lines on stderr")
+	flags := commonFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ctx, cancel, err := adapter.WithTimeout(ctx, "download", *timeout)
+	ctx, cancel, err := adapter.WithTimeout(ctx, "download", *flags.timeout)
 	if err != nil {
-		return err
+		return flags.report(nil, err)
 	}
 	defer cancel()
-	out, err := client.Download(ctx, aakb.DownloadRequest{Hash: *hash, DOI: *doi, OpenAlexID: *openalex, Title: *title, Format: *format})
-	return printJSON(out, err)
+	req := aakb.DownloadRequest{
+		Hash: *hash, DOI: *doi, OpenAlexID: *openalex, Title: *title, Format: *format,
+		Artifact: *artifact, LocationID: *location, Version: *fileVersion,
+	}
+	if !*quiet {
+		req.Progress = stderrProgress()
+	}
+	out, err := client.Download(ctx, req)
+	return flags.report(out, err)
+}
+
+// stderrProgress prints one line when the transfer starts, one for each
+// further tenth of the file or 8 MiB when the size is unknown, and one at
+// the end.
+func stderrProgress() func(done, total int64) {
+	const step = 8 << 20
+	last := int64(-1)
+	return func(done, total int64) {
+		var mark int64
+		if total > 0 {
+			mark = done * 10 / total
+		} else {
+			mark = done / step
+		}
+		if mark == last && done != total {
+			return
+		}
+		last = mark
+		if total > 0 {
+			fmt.Fprintf(os.Stderr, "aakb: downloaded %d of %d bytes\n", done, total)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "aakb: downloaded %d bytes\n", done)
+	}
 }
 
 func printJSON(out any, err error) error {
@@ -222,11 +352,15 @@ Usage:
   aakb mcp              serve MCP over stdio
   aakb serve [-addr 127.0.0.1:8080]   serve the web UI at /, REST at /api/v1, MCP at /mcp and health at /healthz
   aakb search [-kind book|article|metadata|openalex] [field flags] [-limit 10] [query]
-  aakb details <hash|doi|catalog-id>
+  aakb details <hash|doi|catalog-id|openalex-id>
   aakb read <openalex-id|doi>
   aakb download -hash <md5> | -doi <doi> | -openalex-id <id> [-title t] [-format epub]
   aakb account
+  aakb health [-addr 127.0.0.1:8080]   exit 0 when a running aakb serve answers /healthz
   aakb version
+
+Every one-shot command takes -timeout <seconds> and -json-errors.
+Run a command with -h to list its flags.
 
 Environment:
   ANNAS_SECRET_KEY      Anna's Archive account secret key (required for search and download)
@@ -235,7 +369,9 @@ Environment:
   ANNAS_AUTO_BASE_URL   mirror failover, true or false (default true)
   ANNAS_ACCOUNT_COOKIE  optional aa_account_id2 cookie
   OPENALEX_API_KEY      enables article_read and OpenAlex search/download
+  ANNAS_ALLOWED_TLDS    optional comma-separated top-level domains ANNAS_BASE_URL may use
   AAKB_HTTP_TOKEN       bearer token required by aakb serve when set
+  AAKB_TRUSTED_PROXIES  proxy addresses or CIDR networks whose X-Forwarded-For is believed
   AAKB_CACHE_DIR        session and mirror cache (default ~/.cache/aakb)
 
 Use only for material you are entitled to obtain.

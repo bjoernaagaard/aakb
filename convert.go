@@ -1,6 +1,7 @@
 package aakb
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"maps"
@@ -135,6 +136,27 @@ func recordDetails(d *anna.Details) *RecordDetails {
 		FastDownload: d.FastDownload, Stats: recordStats(d.Stats),
 		Problems: convertAll(d.Problems, func(p anna.Problem) Problem { return Problem(p) }),
 	}
+}
+
+func workDetails(w *papers.Work) *RecordDetails {
+	identifiers := map[string][]string{"openalex": {w.OpenAlexID}}
+	if w.DOI != "" {
+		identifiers["doi"] = []string{w.DOI}
+	}
+	out := &RecordDetails{
+		ID: w.OpenAlexID, Hash: w.Hash, URL: w.PageURL, Title: w.Title, Authors: w.Authors,
+		Publisher: w.Journal, Year: w.Year, Format: w.Format,
+		Description: shortenDescription(cmp.Or(w.Abstract, w.Description)),
+		Identifiers: identifiers, Sources: slices.Clone(w.Sources),
+		FastDownload: w.FastDownload, Stats: recordStats(w.Stats),
+	}
+	if w.Language != "" {
+		out.Languages = []string{w.Language}
+	}
+	if w.WorkType != "" {
+		out.Subjects = []string{w.WorkType}
+	}
+	return out
 }
 
 func articleResult(r *papers.ReadResult) *Article {

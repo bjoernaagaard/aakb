@@ -35,6 +35,7 @@ func (a *API) capabilities(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	query, err := parseQuery(r, "q", "kind", "title", "author", "publisher", "year", "work_type",
+		"author_id", "institution_id", "repository_id", "relation", "work_id",
 		"format", "language", "source", "content", "sort", "page", "limit",
 		"stats", "rank", "downloadable_only", "search_descriptions", "timeout_seconds")
 	if err != nil {
@@ -65,9 +66,10 @@ func parseSearch(query url.Values) (aakb.SearchRequest, error) {
 		Formats: adapter.SplitList(query.Get("format")), Languages: adapter.SplitList(query.Get("language")),
 		Sources: adapter.SplitList(query.Get("source")), Content: adapter.SplitList(query.Get("content")),
 		Sort: aakb.Sort(query.Get("sort")),
-	}
-	if strings.TrimSpace(req.Query+req.Title+req.Author+req.Publisher+req.Year) == "" {
-		return req, errors.New("provide q or at least one of title, author, publisher or year")
+		OpenAlex: aakb.OpenAlexFilter{
+			AuthorID: query.Get("author_id"), InstitutionID: query.Get("institution_id"),
+			RepositoryID: query.Get("repository_id"), Relation: query.Get("relation"), WorkID: query.Get("work_id"),
+		},
 	}
 	switch req.Kind {
 	case aakb.KindAuto, aakb.KindBook, aakb.KindArticle, aakb.KindMetadata, aakb.KindOpenAlex:
@@ -180,6 +182,7 @@ func (a *API) download(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out, err := a.client.Download(ctx, aakb.DownloadRequest{
 		Hash: input.Hash, DOI: input.DOI, OpenAlexID: input.OpenAlexID, Title: input.Title, Format: input.Format,
+		Artifact: input.Artifact, LocationID: input.LocationID, Version: input.Version,
 	})
 	if err != nil {
 		a.writeClientError(w, r, err)

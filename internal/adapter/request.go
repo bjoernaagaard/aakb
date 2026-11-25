@@ -3,23 +3,37 @@ package adapter
 
 import (
 	"context"
-	"math"
 	"strings"
 	"time"
 
 	"github.com/bjoernaagaard/aakb"
 )
 
+const (
+	maxTimeout         = 10 * time.Minute
+	maxDownloadTimeout = 2 * time.Hour
+)
+
 // WithTimeout applies an explicit timeout in seconds. Zero leaves the
-// deadline unchanged so the library can supply its default.
+// deadline unchanged so the library can supply its default. A negative
+// value is rejected. A value above the cap for op, which is two hours for a
+// download and ten minutes for anything else, is lowered to the cap.
 func WithTimeout(ctx context.Context, op string, seconds int) (context.Context, context.CancelFunc, error) {
-	if seconds < 0 || int64(seconds) > int64(math.MaxInt64/time.Second) {
-		return nil, nil, &aakb.Error{Code: aakb.CodeInvalidArgument, Op: op, Message: "timeout_seconds is outside the supported range"}
+	if seconds < 0 {
+		return nil, nil, &aakb.Error{Code: aakb.CodeInvalidArgument, Op: op, Message: "timeout_seconds must not be negative"}
 	}
 	if seconds == 0 {
 		return ctx, func() {}, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	limit := maxTimeout
+	if op == "download" {
+		limit = maxDownloadTimeout
+	}
+	timeout := limit
+	if int64(seconds) < int64(limit/time.Second) {
+		timeout = time.Duration(seconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	return ctx, cancel, nil
 }
 

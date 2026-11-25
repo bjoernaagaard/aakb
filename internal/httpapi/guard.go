@@ -4,6 +4,8 @@ import (
 	"crypto/subtle"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,11 +24,13 @@ type accessGuard struct {
 	bearer   []byte
 	port     string
 	loopback bool
+	proxies  []netip.Prefix
 	limiter  rateLimiter
 }
 
 func newGuard(opts Options) *accessGuard {
 	guard := &accessGuard{
+		proxies: opts.TrustedProxies,
 		limiter: rateLimiter{hits: make(map[string][]time.Time)},
 	}
 	if host, port, err := net.SplitHostPort(opts.Addr); err == nil {
@@ -41,11 +45,7 @@ func newGuard(opts Options) *accessGuard {
 
 func (g *accessGuard) wrap(next http.Handler, kind routeKind) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
-		}
-		if retry := g.limiter.hit(ip); retry > 0 {
+		if retry := g.limiter.hit(clientIP(r.RemoteAddr, r.Header.Values("X-Forwarded-For"), g.proxies)); retry > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(retry))
 			if kind == mcpRoute {
 				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
@@ -69,6 +69,44 @@ func (g *accessGuard) wrap(next http.Handler, kind routeKind) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// clientIP names the client for rate limiting. When the connection comes
+// from a trusted proxy, it is the last X-Forwarded-For address that is not
+// itself a trusted proxy. Otherwise it is the connection's own address.
+func clientIP(remoteAddr string, forwarded []string, proxies []netip.Prefix) string {
+	ip, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		ip = remoteAddr
+	}
+	if !trusted(ip, proxies) {
+		return ip
+	}
+	hops := strings.Split(strings.Join(forwarded, ","), ",")
+	for _, hop := range slices.Backward(hops) {
+		hop = strings.TrimSpace(hop)
+		if _, err := netip.ParseAddr(hop); err != nil {
+			break
+		}
+		if !trusted(hop, proxies) {
+			return hop
+		}
+	}
+	return ip
+}
+
+func trusted(ip string, proxies []netip.Prefix) bool {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, prefix := range proxies {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *accessGuard) allowTokenless(w http.ResponseWriter, r *http.Request) bool {

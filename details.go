@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
+	"github.com/SokolskyNikita/annas-mcp/papers"
 )
 
 // RecordDetails contains the metadata for one file or catalog entry.
@@ -40,7 +41,8 @@ type Problem struct {
 
 var openAlexID = regexp.MustCompile(`(?i)^W[0-9]+$`)
 
-// Details looks up an MD5, archive record URL, catalog ID, or bare DOI.
+// Details looks up an MD5, archive record URL, catalog ID, bare DOI, or,
+// with an OpenAlex key, an OpenAlex work ID.
 // If ctx has no deadline, Details applies a 60-second deadline.
 func (c *Client) Details(ctx context.Context, id string) (*RecordDetails, error) {
 	const op = "details"
@@ -51,7 +53,14 @@ func (c *Client) Details(ctx context.Context, id string) (*RecordDetails, error)
 	}
 	id = strings.TrimSpace(id)
 	if openAlexID.MatchString(id) {
-		return nil, newError(op, CodeInvalidArgument, "use ReadArticle or Download for an OpenAlex work ID")
+		if c.papers == nil {
+			return nil, newError(op, CodeConfig, "OpenAlexKey is required for an OpenAlex work ID")
+		}
+		work, err := c.papers.Details(ctx, id, papers.DetailsOptions{Provider: "openalex"})
+		if err := classify(ctx, op, err); err != nil {
+			return nil, err
+		}
+		return workDetails(work), nil
 	}
 	if strings.HasPrefix(id, "10.") && anna.IsDOIQuery(id) {
 		paper, err := c.archive.LookupDOI(ctx, id, 0)

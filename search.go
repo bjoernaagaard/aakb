@@ -59,10 +59,22 @@ const (
 type SearchRequest struct {
 	Kind                                                     Kind
 	Query, Title, Author, Publisher, Year, WorkType          string
+	OpenAlex                                                 OpenAlexFilter
 	Formats, Languages, Sources, Content                     []string
 	Sort                                                     Sort
 	Page, Limit                                              int
 	IncludeStats, Rank, DownloadableOnly, SearchDescriptions bool
+}
+
+// OpenAlexFilter narrows a KindOpenAlex search by OpenAlex identifiers.
+// Relation is "citing", "references" or "related" and needs WorkID.
+type OpenAlexFilter struct {
+	AuthorID, InstitutionID, RepositoryID string
+	Relation, WorkID                      string
+}
+
+func (f OpenAlexFilter) empty() bool {
+	return strings.TrimSpace(f.AuthorID+f.InstitutionID+f.RepositoryID+f.Relation+f.WorkID) == ""
 }
 
 // SearchResult contains exact results and up to five looser matches.
@@ -127,7 +139,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResult, 
 	req.Kind = Kind(strings.ToLower(strings.TrimSpace(string(req.Kind))))
 	if strings.TrimSpace(req.Query) == "" && strings.TrimSpace(req.Title) == "" &&
 		strings.TrimSpace(req.Author) == "" && strings.TrimSpace(req.Publisher) == "" &&
-		strings.TrimSpace(req.Year) == "" && (req.Kind != KindOpenAlex || strings.TrimSpace(req.WorkType) == "") {
+		strings.TrimSpace(req.Year) == "" && (req.Kind != KindOpenAlex || (strings.TrimSpace(req.WorkType) == "" && req.OpenAlex.empty())) {
 		return nil, newError(op, CodeInvalidArgument, "provide a query or at least one of title, author, publisher or year")
 	}
 	req.Sort = Sort(strings.ToLower(strings.TrimSpace(string(req.Sort))))
@@ -140,6 +152,9 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResult, 
 	}
 	if req.Kind == KindOpenAlex {
 		return c.searchOpenAlex(ctx, req)
+	}
+	if !req.OpenAlex.empty() {
+		return nil, newError(op, CodeInvalidArgument, "author_id, institution_id, repository_id, relation and work_id need kind openalex")
 	}
 	if (req.Kind == KindAuto || req.Kind == KindArticle) && anna.IsDOIQuery(req.Query) {
 		paper, err := c.archive.LookupDOI(ctx, req.Query, 0)
@@ -185,6 +200,8 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 		Query: req.Query, Title: req.Title, Author: req.Author, Year: req.Year,
 		Language: strings.Join(req.Languages, ","), WorkType: req.WorkType, Sort: string(req.Sort),
 		Page: req.Page, Limit: req.Limit, DownloadableOnly: req.DownloadableOnly,
+		AuthorID: req.OpenAlex.AuthorID, InstitutionID: req.OpenAlex.InstitutionID,
+		RepositoryID: req.OpenAlex.RepositoryID, Relation: req.OpenAlex.Relation, WorkID: req.OpenAlex.WorkID,
 	})
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err

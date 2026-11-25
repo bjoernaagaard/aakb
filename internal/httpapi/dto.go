@@ -21,6 +21,9 @@ type downloadInput struct {
 	OpenAlexID     string `json:"openalex_id"`
 	Title          string `json:"title"`
 	Format         string `json:"format"`
+	Artifact       string `json:"artifact"`
+	LocationID     string `json:"location_id"`
+	Version        string `json:"version"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
