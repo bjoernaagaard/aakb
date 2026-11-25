@@ -5,9 +5,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-
-	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 )
 
 const (
@@ -156,35 +153,39 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResult, 
 	if !req.OpenAlex.empty() {
 		return nil, newError(op, CodeInvalidArgument, "author_id, institution_id, repository_id, relation and work_id need kind openalex")
 	}
-	if (req.Kind == KindAuto || req.Kind == KindArticle) && anna.IsDOIQuery(req.Query) {
-		paper, err := c.archive.LookupDOI(ctx, req.Query, 0)
+	if (req.Kind == KindAuto || req.Kind == KindArticle) && isDOIQuery(req.Query) {
+		rec, err := c.archive.LookupDOI(ctx, req.Query)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
 		return c.finishSearch(ctx, req, &SearchResult{
-			Kind: KindArticle, Results: []Record{paperRecord(paper)}, Total: 1,
+			Kind: KindArticle, Results: []Record{*rec}, Total: 1,
 		})
 	}
 
-	opts := searchOptions(req)
-	var out *SearchResult
-	var err error
 	switch req.Kind {
-	case KindAuto, KindBook:
-		var page anna.SearchPage[*anna.Book]
-		page, err = c.archive.FindBook(ctx, req.Query, opts, 0)
-		out = convertPage(KindBook, page, bookRecord)
-	case KindArticle:
-		var page anna.SearchPage[*anna.Paper]
-		page, err = c.archive.FindArticle(ctx, req.Query, opts, 0)
-		out = convertPage(KindArticle, page, paperRecord)
-	case KindMetadata:
-		var page anna.SearchPage[*anna.MetadataRecord]
-		page, err = c.archive.FindMetadata(ctx, req.Query, opts, 0)
-		out = convertPage(KindMetadata, page, metadataRecord)
+	case KindAuto, KindBook, KindArticle, KindMetadata:
+	case KindOpenAlex:
+		return c.searchOpenAlex(ctx, req)
 	default:
 		return nil, newError(op, CodeInvalidArgument, "kind must be book, article, metadata or openalex")
 	}
+
+	out, err := c.archive.Search(ctx, archiveSearchQuery{
+		Kind:               req.Kind,
+		Query:              req.Query,
+		Title:              req.Title,
+		Author:             req.Author,
+		Publisher:          req.Publisher,
+		Year:               req.Year,
+		Formats:            req.Formats,
+		Languages:          req.Languages,
+		Sources:            req.Sources,
+		Content:            req.Content,
+		Sort:               req.Sort,
+		Page:               req.Page,
+		SearchDescriptions: req.SearchDescriptions,
+	})
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
 	}
@@ -196,23 +197,21 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	if c.papers == nil {
 		return nil, newError(op, CodeConfig, "OpenAlexKey is required for OpenAlex search")
 	}
-	res, err := c.papers.Search(ctx, papers.SearchOptions{
-		Query: req.Query, Title: req.Title, Author: req.Author, Year: req.Year,
-		Language: strings.Join(req.Languages, ","), WorkType: req.WorkType, Sort: string(req.Sort),
-		Page: req.Page, Limit: req.Limit, DownloadableOnly: req.DownloadableOnly,
-		AuthorID: req.OpenAlex.AuthorID, InstitutionID: req.OpenAlex.InstitutionID,
-		RepositoryID: req.OpenAlex.RepositoryID, Relation: req.OpenAlex.Relation, WorkID: req.OpenAlex.WorkID,
+	out, err := c.papers.Search(ctx, openAlexSearchRequest{
+		Query:            req.Query,
+		Title:            req.Title,
+		Author:           req.Author,
+		Year:             req.Year,
+		WorkType:         req.WorkType,
+		Languages:        req.Languages,
+		Sort:             req.Sort,
+		Page:             req.Page,
+		Limit:            req.Limit,
+		DownloadableOnly: req.DownloadableOnly,
+		Filter:           req.OpenAlex,
 	})
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
-	}
-	out := &SearchResult{
-		Kind: KindOpenAlex, Total: res.Total, TotalIsLowerBound: res.TotalIsLowerBound, MorePages: res.MorePages,
-		Results: convertAll(res.Results, workRecord), PartialMatches: convertAll(res.PartialMatches, workRecord),
-	}
-	if res.Work != nil && (!req.DownloadableOnly || res.Work.DownloadArgs != nil) {
-		out.Results = []Record{workRecord(res.Work)}
-		out.Total = 1
 	}
 	out.Results = dedupe(out.Results)
 	normalizeSearch(req, out)
@@ -251,6 +250,7 @@ func normalizeSearch(req SearchRequest, out *SearchResult) {
 		out.NextPage = req.Page + 1
 	}
 }
+
 func filterDownloadable(in []Record) []Record {
 	out := make([]Record, 0, len(in))
 	for _, r := range in {
@@ -339,7 +339,7 @@ func (c *Client) attachStats(ctx context.Context, out *SearchResult) {
 	}
 	for i, r := range out.Results {
 		if st, ok := stats[r.Hash]; ok {
-			out.Results[i].Stats = recordStats(&st)
+			out.Results[i].Stats = new(st)
 		}
 	}
 }

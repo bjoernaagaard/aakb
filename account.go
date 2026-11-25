@@ -19,9 +19,9 @@ func (c *Client) AccountStatus(ctx context.Context) (*Account, error) {
 	const op = "account"
 	ctx, cancel := withDefaultTimeout(ctx, defaultTimeout)
 	defer cancel()
-	status, err := c.archive.AccountStatus(ctx, 0)
+	status, err := c.archive.AccountStatus(ctx)
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
 	}
-	return accountResult(status), nil
+	return status, nil
 }

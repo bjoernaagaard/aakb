@@ -3,9 +3,6 @@ package aakb
 import (
 	"context"
 	"strings"
-
-	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 )
 
 // DownloadRequest selects exactly one of Hash, DOI, and OpenAlexID.
@@ -66,7 +63,6 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 	if given != 1 {
 		return nil, newError(op, CodeInvalidArgument, "give exactly one of hash, doi or openalex_id")
 	}
-	progress := anna.ProgressFunc(req.Progress)
 	if req.OpenAlexID == "" && strings.TrimSpace(req.Artifact+req.LocationID+req.Version) != "" {
 		return nil, newError(op, CodeInvalidArgument, "artifact, location_id and version need openalex_id")
 	}
@@ -74,55 +70,50 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 		if c.papers == nil {
 			return nil, newError(op, CodeConfig, "OpenAlexKey is required for an OpenAlex download")
 		}
-		res, err := c.papers.Download(ctx, papers.DownloadOptions{
-			OpenAlexID: req.OpenAlexID, Title: req.Title, Format: req.Format,
-			Artifact: req.Artifact, LocationID: req.LocationID, Version: req.Version,
-		}, progress)
+		out, err := c.papers.Download(ctx, openAlexDownloadRequest{
+			OpenAlexID: req.OpenAlexID,
+			Title:      req.Title,
+			Format:     req.Format,
+			Artifact:   req.Artifact,
+			LocationID: req.LocationID,
+			Version:    req.Version,
+			Progress:   req.Progress,
+		})
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
-		out := downloadResult(res.DownloadResult)
-		if res.SHA256 != "" {
-			out.SHA256 = res.SHA256
-			out.Verification = VerificationSHA256
-		}
-		out.Reused = out.Reused || res.Reused
 		return out, nil
 	}
 	if req.Title == "" {
 		// A failed metadata lookup leaves the filename choice to the provider.
 		if req.DOI != "" {
-			if paper, err := c.archive.LookupDOI(ctx, req.DOI, 0); err == nil {
+			if paper, err := c.archive.LookupDOI(ctx, req.DOI); err == nil {
 				req.Title = paper.Title
 			}
-		} else if details, err := c.archive.Details(ctx, req.Hash, 0); err == nil {
+		} else if details, err := c.archive.Details(ctx, req.Hash); err == nil {
 			req.Title = details.Title
 		}
 		if err := classify(ctx, op, nil); err != nil {
 			return nil, err
 		}
 	}
-	article := anna.ArticleDownloadOptions{Hash: req.Hash, DOI: req.DOI, Title: req.Title, Format: req.Format}
+	archiveReq := archiveDownloadRequest{
+		Hash:     req.Hash,
+		DOI:      req.DOI,
+		Title:    req.Title,
+		Format:   req.Format,
+		Progress: req.Progress,
+	}
 	if req.DOI != "" {
-		res, err := c.archive.DownloadArticle(ctx, article, 0, progress)
+		out, err := c.archive.DownloadDOI(ctx, archiveReq)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
-		return downloadResult(res), nil
+		return out, nil
 	}
-	res, err := c.archive.DownloadBook(ctx, &anna.Book{Hash: req.Hash, Title: req.Title, Format: req.Format}, 0, progress)
-	failure := classify(ctx, op, err)
-	if CodeOf(failure) == CodeNotFound {
-		fallback, fallbackErr := c.archive.DownloadArticle(ctx, article, 0, progress)
-		if err := classify(ctx, op, nil); err != nil {
-			return nil, err
-		}
-		if fallbackErr == nil {
-			return downloadResult(fallback), nil
-		}
+	out, err := c.archive.DownloadHash(ctx, archiveReq)
+	if err := classify(ctx, op, err); err != nil {
+		return nil, err
 	}
-	if failure != nil {
-		return nil, failure
-	}
-	return downloadResult(res), nil
+	return out, nil
 }

@@ -47,8 +47,8 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 		if r.URL.Query().Get("upstream") == "1" {
 			probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
-			status, code := upstreamReachable(probeCtx, cfg.BaseURL)
-			if _, err := fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, status, code); err != nil {
+			up := client.UpstreamHealth(probeCtx)
+			if _, err := fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, up.Status, up.HTTPStatus); err != nil {
 				logger.WarnContext(r.Context(), "health response not written", "error", err)
 			}
 			return

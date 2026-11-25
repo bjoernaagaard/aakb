@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,8 @@ type Config struct {
 	SecretKey     string
 	AccountCookie string
 	BaseURL       string
+	Mirrors       []string
+	AllowedTLDs   []string
 	AutoBaseURL   bool
 	DownloadPath  string
 	CacheDir      string
@@ -34,6 +37,8 @@ type Config struct {
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Bool("base_url_set", c.BaseURL != ""),
+		slog.Int("mirrors_count", len(c.Mirrors)),
+		slog.Int("allowed_tlds_count", len(c.AllowedTLDs)),
 		slog.Bool("auto_base_url", c.AutoBaseURL),
 		slog.String("download_path", c.DownloadPath),
 		slog.String("cache_dir", c.CacheDir),
@@ -73,8 +78,15 @@ func FromEnv() (Config, error) {
 		secretKey = os.Getenv("ANNAS_ARCHIVE_API_KEY")
 	}
 	baseURL := os.Getenv("ANNAS_BASE_URL")
-	if err := checkTLD(baseURL, os.Getenv("ANNAS_ALLOWED_TLDS")); err != nil {
+	mirrors := parseCSV(os.Getenv("ANNAS_MIRRORS"))
+	allowedTLDs := parseTLDs(os.Getenv("ANNAS_ALLOWED_TLDS"))
+	if err := checkTLD("ANNAS_BASE_URL", baseURL, allowedTLDs); err != nil {
 		return Config{}, err
+	}
+	for _, mirror := range mirrors {
+		if err := checkTLD("ANNAS_MIRRORS", mirror, allowedTLDs); err != nil {
+			return Config{}, err
+		}
 	}
 	proxies, err := parsePrefixes(os.Getenv("AAKB_TRUSTED_PROXIES"))
 	if err != nil {
@@ -85,6 +97,8 @@ func FromEnv() (Config, error) {
 		SecretKey:      secretKey,
 		AccountCookie:  os.Getenv("ANNAS_ACCOUNT_COOKIE"),
 		BaseURL:        baseURL,
+		Mirrors:        mirrors,
+		AllowedTLDs:    allowedTLDs,
 		AutoBaseURL:    auto,
 		DownloadPath:   downloadPath,
 		CacheDir:       cacheDir,
@@ -100,28 +114,59 @@ func (c Config) Client() aakb.Config {
 		mirror = aakb.MirrorFixed
 	}
 	return aakb.Config{
-		SecretKey: c.SecretKey, AccountCookie: c.AccountCookie, BaseURL: c.BaseURL, Mirror: mirror,
-		DownloadDir: c.DownloadPath, CacheDir: c.CacheDir, OpenAlexKey: c.OpenAlexKey,
+		SecretKey:     c.SecretKey,
+		AccountCookie: c.AccountCookie,
+		BaseURL:       c.BaseURL,
+		Mirrors:       c.Mirrors,
+		AllowedTLDs:   c.AllowedTLDs,
+		Mirror:        mirror,
+		DownloadDir:   c.DownloadPath,
+		CacheDir:      c.CacheDir,
+		OpenAlexKey:   c.OpenAlexKey,
 	}
 }
 
-// checkTLD rejects a mirror whose top-level domain is missing from a
-// non-empty comma-separated allowlist such as "gl,gd,pk".
-func checkTLD(baseURL, allowed string) error {
-	if baseURL == "" || strings.TrimSpace(allowed) == "" {
-		return nil
-	}
-	host := baseURL
-	if u, err := url.Parse(baseURL); err == nil && u.Hostname() != "" {
-		host = u.Hostname()
-	}
-	tld := strings.ToLower(host[strings.LastIndex(host, ".")+1:])
-	for part := range strings.SplitSeq(allowed, ",") {
-		if strings.ToLower(strings.TrimPrefix(strings.TrimSpace(part), ".")) == tld {
-			return nil
+func parseCSV(raw string) []string {
+	var out []string
+	for part := range strings.SplitSeq(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
 		}
 	}
-	return fmt.Errorf("ANNAS_BASE_URL has a top-level domain outside ANNAS_ALLOWED_TLDS")
+	return out
+}
+
+func parseTLDs(raw string) []string {
+	var out []string
+	for part := range strings.SplitSeq(raw, ",") {
+		if tld := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(part), ".")); tld != "" {
+			out = append(out, tld)
+		}
+	}
+	return out
+}
+
+// checkTLD rejects a mirror whose top-level domain is missing from a
+// non-empty allowlist such as ["gl", "gd", "pk"].
+func checkTLD(envName, rawHost string, allowed []string) error {
+	if rawHost == "" || len(allowed) == 0 {
+		return nil
+	}
+	host := strings.TrimSpace(rawHost)
+	if u, err := url.Parse(host); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	} else if u, err := url.Parse("https://" + host); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	idx := strings.LastIndex(host, ".")
+	if idx < 0 || idx+1 >= len(host) {
+		return fmt.Errorf("%s has a top-level domain outside ANNAS_ALLOWED_TLDS", envName)
+	}
+	tld := strings.ToLower(host[idx+1:])
+	if slices.Contains(allowed, tld) {
+		return nil
+	}
+	return fmt.Errorf("%s has a top-level domain outside ANNAS_ALLOWED_TLDS", envName)
 }
 
 // parsePrefixes reads comma-separated addresses or CIDR networks.

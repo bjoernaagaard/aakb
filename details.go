@@ -4,9 +4,6 @@ import (
 	"context"
 	"regexp"
 	"strings"
-
-	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 )
 
 // RecordDetails contains the metadata for one file or catalog entry.
@@ -56,14 +53,15 @@ func (c *Client) Details(ctx context.Context, id string) (*RecordDetails, error)
 		if c.papers == nil {
 			return nil, newError(op, CodeConfig, "OpenAlexKey is required for an OpenAlex work ID")
 		}
-		work, err := c.papers.Details(ctx, id, papers.DetailsOptions{Provider: "openalex"})
+		details, err := c.papers.Details(ctx, id)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
-		return workDetails(work), nil
+		details.Description = shortenDescription(details.Description)
+		return details, nil
 	}
-	if strings.HasPrefix(id, "10.") && anna.IsDOIQuery(id) {
-		paper, err := c.archive.LookupDOI(ctx, id, 0)
+	if strings.HasPrefix(id, "10.") && isDOIQuery(id) {
+		paper, err := c.archive.LookupDOI(ctx, id)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
@@ -72,11 +70,12 @@ func (c *Client) Details(ctx context.Context, id string) (*RecordDetails, error)
 		}
 		id = paper.Hash
 	}
-	details, err := c.archive.Details(ctx, id, 0)
+	details, err := c.archive.Details(ctx, id)
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
 	}
-	return recordDetails(details), nil
+	details.Description = shortenDescription(details.Description)
+	return details, nil
 }
 
 func shortenDescription(description string) string {

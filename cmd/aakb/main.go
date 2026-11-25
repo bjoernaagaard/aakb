@@ -366,10 +366,11 @@ Environment:
   ANNAS_SECRET_KEY      Anna's Archive account secret key (required for search and download)
   ANNAS_DOWNLOAD_PATH   download folder (default ~/annas-archive)
   ANNAS_BASE_URL        preferred mirror (default https://annas-archive.gl)
+  ANNAS_MIRRORS         optional comma-separated extra mirror hosts for failover
   ANNAS_AUTO_BASE_URL   mirror failover, true or false (default true)
   ANNAS_ACCOUNT_COOKIE  optional aa_account_id2 cookie
   OPENALEX_API_KEY      enables article_read and OpenAlex search/download
-  ANNAS_ALLOWED_TLDS    optional comma-separated top-level domains ANNAS_BASE_URL may use
+  ANNAS_ALLOWED_TLDS    optional comma-separated top-level domains archive mirrors may use
   AAKB_HTTP_TOKEN       bearer token required by aakb serve when set
   AAKB_TRUSTED_PROXIES  proxy addresses or CIDR networks whose X-Forwarded-For is believed
   AAKB_CACHE_DIR        session and mirror cache (default ~/.cache/aakb)

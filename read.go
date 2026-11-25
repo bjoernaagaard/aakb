@@ -3,8 +3,6 @@ package aakb
 import (
 	"context"
 	"strings"
-
-	"github.com/SokolskyNikita/annas-mcp/papers"
 )
 
 // ReadRequest selects a work and a character budget (default 8000, maximum
@@ -53,9 +51,9 @@ func (c *Client) ReadArticle(ctx context.Context, req ReadRequest) (*Article, er
 	if req.Limit < 0 || req.Limit > 16000 {
 		return nil, newError(op, CodeInvalidArgument, "limit must be between 1 and 16000 characters, or zero for the default")
 	}
-	result, err := c.papers.Read(ctx, papers.ReadOptions{ID: req.ID, Continuation: req.Continuation, Limit: req.Limit})
+	result, err := c.papers.Read(ctx, req)
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
 	}
-	return articleResult(result), nil
+	return result, nil
 }

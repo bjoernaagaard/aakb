@@ -216,11 +216,12 @@ Without a caller deadline, operations have 60 seconds and downloads have
 | `ANNAS_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. Falls back to `ANNAS_ARCHIVE_API_KEY`. |
 | `ANNAS_DOWNLOAD_PATH` | Download folder. Default `~/annas-archive`. |
 | `ANNAS_BASE_URL` | Preferred mirror. Default `https://annas-archive.gl`. The host you set receives your credentials, so use only one you trust. |
+| `ANNAS_MIRRORS` | Optional comma-separated extra archive mirror hosts to try during failover. |
 | `ANNAS_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |
 | `ANNAS_ACCOUNT_COOKIE` | Optional `aa_account_id2` cookie, used until it expires. |
 | `AAKB_CACHE_DIR` | Session and mirror health cache. Default `~/.cache/aakb`, mode `0700`. |
 | `OPENALEX_API_KEY` | Enables `article_read`, OpenAlex search and OpenAlex downloads. |
-| `ANNAS_ALLOWED_TLDS` | Optional comma-separated top-level domains, such as `gl,gd`. aakb refuses to start when `ANNAS_BASE_URL` uses another one. |
+| `ANNAS_ALLOWED_TLDS` | Optional comma-separated top-level domains, such as `gl,gd`. aakb refuses to start when `ANNAS_BASE_URL` or `ANNAS_MIRRORS` uses another one. |
 | `AAKB_TRUSTED_PROXIES` | Comma-separated proxy addresses or CIDR networks. `aakb serve` reads the client address from `X-Forwarded-For` only on connections from these. |
 | `AAKB_HTTP_TOKEN` | Bearer token that `aakb serve` requires when set. Without it, serve binds to `127.0.0.1` by default. Downloads are then readable at `/downloads/{name}` with the same token. |
 
