@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aakb</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/icon.svg">
+  <link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header id="site-header" class="site-header" hidden>
+    <div class="container header-inner">
+      <a class="brand" href="#/">
+        <img src="/ui/icon.svg" alt="" width="28" height="28" class="brand-mark">
+        <span class="brand-name">aakb</span>
+        <span id="app-version" class="brand-version" hidden></span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#/" id="nav-search" class="nav-link">Search</a>
+        <a href="#/account" id="nav-account" class="nav-link">Account</a>
+        <button type="button" id="sign-out-btn" class="btn btn-ghost btn-sm" hidden>Sign out</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" class="main-content" tabindex="-1">
+    <div class="container">
+      <noscript>
+        <section class="panel panel-warning" aria-labelledby="noscript-heading">
+          <h1 id="noscript-heading">JavaScript is required</h1>
+          <p>The aakb web interface runs in the browser and requires JavaScript. You can use the command-line tool instead: <code>aakb search</code>, <code>aakb details</code>, <code>aakb read</code>, <code>aakb download</code>, and <code>aakb account</code>.</p>
+        </section>
+      </noscript>
+      <div id="app" class="app-root"></div>
+    </div>
+  </main>
+
+  <footer id="site-footer" class="site-footer" hidden>
+    <div class="container footer-inner">
+      <p>Use aakb only for material you are entitled to obtain.</p>
+    </div>
+  </footer>
+
+  <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/ui/app.js"></script>
+</body>
+</html>
