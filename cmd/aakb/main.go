@@ -11,16 +11,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -79,7 +74,7 @@ func run() error {
 		}
 		return nil
 	case "serve":
-		return serveHTTP(ctx, client, cfg, logger, args)
+		return serveHTTP(ctx, client, cfg, logger, args, nil)
 	case "search":
 		return cliSearch(ctx, client, args)
 	case "details":
@@ -104,98 +99,6 @@ func version() string {
 		return info.Main.Version
 	}
 	return "dev"
-}
-
-type rateLimiter struct {
-	mu   sync.Mutex
-	hits map[string][]time.Time
-}
-
-func (r *rateLimiter) allow(ip string) bool {
-	now := time.Now()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var kept []time.Time
-	for _, at := range r.hits[ip] {
-		if now.Sub(at) < time.Minute {
-			kept = append(kept, at)
-		}
-	}
-	if len(kept) >= 120 {
-		r.hits[ip] = kept
-		return false
-	}
-	r.hits[ip] = append(kept, now)
-	return true
-}
-
-func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logger *slog.Logger, args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		return mcpserver.New(client, logger)
-	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, Logger: logger})
-
-	limiter := &rateLimiter{hits: make(map[string][]time.Time)}
-	auth := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				ip = r.RemoteAddr
-			}
-			if !limiter.allow(ip) {
-				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-				return
-			}
-			if cfg.HTTPToken != "" && r.Header.Get("Authorization") != "Bearer "+cfg.HTTPToken {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/mcp", auth(handler))
-	mux.Handle("GET /downloads/{name}", auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := filepath.Base(r.PathValue("name"))
-		http.ServeFile(w, r, filepath.Join(client.DownloadDir(), name))
-	})))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("upstream") == "1" {
-			probeCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			status, code := upstreamReachable(probeCtx, cfg.BaseURL)
-			_, _ = fmt.Fprintf(w, `{"ok":true,"upstream":{"status":%q,"http_status":%d}}`, status, code) //nolint:errcheck // health response
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":true}`)) //nolint:errcheck // health response
-	})
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           http.NewCrossOriginProtection().Handler(mux),
-		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      40 * time.Minute,
-		IdleTimeout:       2 * time.Minute,
-	}
-	done := make(chan struct{})
-	go func() { //nolint:gosec // shutdown waits on the parent ctx, then uses a fresh deadline
-		defer close(done)
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx) //nolint:errcheck,contextcheck // parent ctx is already cancelled; shutdown needs a fresh deadline
-	}()
-	logger.InfoContext(ctx, "aakb serving MCP over HTTP", "addr", *addr, "path", "/mcp", "auth", cfg.HTTPToken != "")
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve http: %w", err)
-	}
-	<-done
-	return nil
 }
 
 func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
@@ -317,7 +220,7 @@ const usage = `aakb — Anna's Archive MCP server and CLI
 Usage:
   aakb                  serve MCP over stdio (default)
   aakb mcp              serve MCP over stdio
-  aakb serve [-addr 127.0.0.1:8080]   serve MCP over Streamable HTTP at /mcp, health at /healthz
+  aakb serve [-addr 127.0.0.1:8080]   serve MCP at /mcp, REST at /api/v1 and health at /healthz
   aakb search [-kind book|article|metadata|openalex] [field flags] [-limit 10] [query]
   aakb details <hash|doi|catalog-id>
   aakb read <openalex-id|doi>
