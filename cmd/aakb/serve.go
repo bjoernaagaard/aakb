@@ -16,9 +16,10 @@ import (
 	"github.com/bjoernaagaard/aakb/internal/config"
 	"github.com/bjoernaagaard/aakb/internal/httpapi"
 	"github.com/bjoernaagaard/aakb/internal/mcpserver"
+	"github.com/bjoernaagaard/aakb/internal/webui"
 )
 
-func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logger *slog.Logger, args []string, ui http.Handler) error {
+func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 	if err := fs.Parse(args); err != nil {
@@ -36,11 +37,9 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 	api := httpapi.New(client, httpapi.Options{Token: cfg.HTTPToken, Addr: boundAddr, Version: version()}, logger)
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", api.Guard(handler))
-	if ui != nil {
-		publicUI := api.PublicUI(ui)
-		mux.Handle("GET /{$}", publicUI)
-		mux.Handle("GET /ui/{file}", publicUI)
-	}
+	ui := api.PublicUI(webui.Handler())
+	mux.Handle("GET /{$}", ui)
+	mux.Handle("GET /ui/{file}", ui)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("upstream") == "1" {
@@ -67,7 +66,7 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx) //nolint:errcheck,contextcheck // parent ctx is already cancelled; shutdown needs a fresh deadline
 	}()
-	logger.InfoContext(ctx, "aakb serving REST and MCP over HTTP", "addr", boundAddr, "auth", cfg.HTTPToken != "")
+	logger.InfoContext(ctx, "aakb serving the web UI, REST and MCP over HTTP", "addr", boundAddr, "auth", cfg.HTTPToken != "")
 	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve http: %w", err)
 	}

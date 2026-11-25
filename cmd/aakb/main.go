@@ -1,7 +1,7 @@
 // Command aakb is an Anna's Archive MCP server and CLI in one binary.
-// With no arguments it serves MCP over stdio. Subcommands: serve, search,
-// details, download and account. Use only for material you are entitled
-// to obtain.
+// With no arguments it serves MCP over stdio. Subcommands: serve (web UI,
+// REST API and MCP over HTTP), search, details, read, download and account.
+// Use only for material you are entitled to obtain.
 package main
 
 import (
@@ -74,7 +74,7 @@ func run() error {
 		}
 		return nil
 	case "serve":
-		return serveHTTP(ctx, client, cfg, logger, args, nil)
+		return serveHTTP(ctx, client, cfg, logger, args)
 	case "search":
 		return cliSearch(ctx, client, args)
 	case "details":
@@ -220,7 +220,7 @@ const usage = `aakb — Anna's Archive MCP server and CLI
 Usage:
   aakb                  serve MCP over stdio (default)
   aakb mcp              serve MCP over stdio
-  aakb serve [-addr 127.0.0.1:8080]   serve MCP at /mcp, REST at /api/v1 and health at /healthz
+  aakb serve [-addr 127.0.0.1:8080]   serve the web UI at /, REST at /api/v1, MCP at /mcp and health at /healthz
   aakb search [-kind book|article|metadata|openalex] [field flags] [-limit 10] [query]
   aakb details <hash|doi|catalog-id>
   aakb read <openalex-id|doi>
