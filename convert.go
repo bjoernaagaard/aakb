@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/SokolskyNikita/annas-mcp/anna"
-
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 )
 
-// classify maps context errors, structured httpx.ProviderErrors, and legacy
-// annas-mcp errors into credential-free library Errors.
+// classify maps context errors and structured httpx.ProviderErrors, which
+// carry credential-free safe messages, into library Errors.
 func classify(ctx context.Context, op string, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
@@ -32,22 +30,7 @@ func classify(ctx context.Context, op string, err error) error {
 		return classifyProviderError(op, pe)
 	}
 
-	switch anna.CodeOf(err) {
-	case anna.InvalidArgument:
-		return newError(op, CodeInvalidArgument, "provider rejected the request parameters")
-	case anna.CodeConfig:
-		return newError(op, CodeConfig, "provider access requires valid configuration and credentials")
-	case anna.NotFound:
-		return newError(op, CodeNotFound, "provider could not find the requested item")
-	case anna.UpstreamBlocked:
-		return newError(op, CodeUpstreamBlocked, "provider blocked access to the request")
-	case anna.RequestTimeout:
-		return newError(op, CodeTimeout, "provider request timed out")
-	case anna.Upstream:
-		return newError(op, CodeUpstream, "provider could not complete the request")
-	default:
-		return newError(op, CodeInternal, "unexpected provider failure")
-	}
+	return newError(op, CodeInternal, "unexpected provider failure")
 }
 
 func classifyProviderError(op string, pe *httpx.ProviderError) error {
