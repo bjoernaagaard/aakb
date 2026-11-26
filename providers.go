@@ -36,6 +36,12 @@ type archiveDownloadRequest struct {
 	Progress      func(done, total int64)
 }
 
+// Compile-time checks that the providers satisfy the seam interfaces.
+var (
+	_ archiveProvider = (*legacyArchiveProvider)(nil)
+	_ papersProvider  = (*openalexProvider)(nil)
+)
+
 type openAlexSearchRequest struct {
 	Query            string
 	Title            string

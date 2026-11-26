@@ -5,6 +5,8 @@ import (
 	"context"
 	"slices"
 	"strings"
+
+	"github.com/bjoernaagaard/aakb/internal/openalex"
 )
 
 const (
@@ -49,6 +51,8 @@ const (
 	SortOldestAdded Sort = "oldest_added"
 	// SortRandom requests a random order.
 	SortRandom Sort = "random"
+	// SortMostCited puts the most cited OpenAlex works first.
+	SortMostCited Sort = "most_cited"
 )
 
 // SearchRequest describes one search. Page defaults to 1 and Limit to 10
@@ -197,6 +201,45 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	if c.papers == nil {
 		return nil, newError(op, CodeConfig, "OpenAlexKey is required for OpenAlex search")
 	}
+	if openalex.IsWorkID(req.Query) || openalex.NormalizeDOI(req.Query) != "" {
+		if strings.TrimSpace(req.Title+req.Author+req.Publisher+req.Year+req.WorkType+
+			req.OpenAlex.AuthorID+req.OpenAlex.InstitutionID+req.OpenAlex.RepositoryID+
+			req.OpenAlex.Relation+req.OpenAlex.WorkID) != "" || len(req.Languages) > 0 || req.Page > 1 {
+			return nil, newError(op, CodeInvalidArgument, "exact identifier lookup cannot combine discovery filters; use article_details or a keyword query")
+		}
+	}
+	aaOnly := strings.TrimSpace(req.Publisher) != "" || len(req.Formats) > 0 || len(req.Sources) > 0 ||
+		len(req.Content) > 0 || req.SearchDescriptions || req.IncludeStats || archiveOnlySort(req.Sort)
+	oaOnly := strings.TrimSpace(req.WorkType) != "" || !req.OpenAlex.empty() ||
+		openalex.IsWorkID(req.Query) || strings.Contains(req.Year, "-") || req.Sort == SortMostCited
+	if aaOnly && oaOnly {
+		return nil, newError(op, CodeInvalidArgument, "OpenAlex-only and Anna-only search filters cannot be combined")
+	}
+	if aaOnly {
+		kind := req.Kind
+		if kind != KindBook && kind != KindArticle && kind != KindMetadata {
+			kind = KindArticle
+		}
+		out, err := c.archive.Search(ctx, archiveSearchQuery{
+			Kind:               kind,
+			Query:              req.Query,
+			Title:              req.Title,
+			Author:             req.Author,
+			Publisher:          req.Publisher,
+			Year:               req.Year,
+			Formats:            req.Formats,
+			Languages:          req.Languages,
+			Sources:            req.Sources,
+			Content:            req.Content,
+			Sort:               req.Sort,
+			Page:               req.Page,
+			SearchDescriptions: req.SearchDescriptions,
+		})
+		if err := classify(ctx, op, err); err != nil {
+			return nil, err
+		}
+		return c.finishSearch(ctx, req, out)
+	}
 	out, err := c.papers.Search(ctx, openAlexSearchRequest{
 		Query:            req.Query,
 		Title:            req.Title,
@@ -216,6 +259,16 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	out.Results = dedupe(out.Results)
 	normalizeSearch(req, out)
 	return out, nil
+}
+
+// archiveOnlySort reports sorts that only Anna's Archive supports.
+func archiveOnlySort(sort Sort) bool {
+	switch sort {
+	case SortLargest, SortSmallest, SortNewestAdded, SortOldestAdded, SortRandom:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) finishSearch(ctx context.Context, req SearchRequest, out *SearchResult) (*SearchResult, error) {

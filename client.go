@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/openalex"
+	"github.com/bjoernaagaard/aakb/internal/store"
 )
 
 const (
@@ -155,23 +156,35 @@ func New(cfg Config) (*Client, error) {
 		UserAgent:  cfg.UserAgent,
 		Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
 	})
+	archive := newLegacyArchiveProvider(archiveClient, effectiveBaseURL, healthHTTP)
 	c := &Client{
-		archive:     newLegacyArchiveProvider(archiveClient, effectiveBaseURL, healthHTTP),
+		archive:     archive,
 		downloadDir: cfg.DownloadDir,
 	}
 	if strings.TrimSpace(cfg.OpenAlexKey) != "" {
-		papersClient, err := papers.NewClient(papers.Config{
-			OpenAlexAPIKey:    cfg.OpenAlexKey,
-			DownloadPath:      cfg.DownloadDir,
-			CacheDir:          cfg.CacheDir,
-			Archive:           archiveClient,
-			HTTPClient:        cfg.HTTPClient,
-			ContentHTTPClient: cfg.HTTPClient,
+		userAgent := strings.TrimSpace(cfg.UserAgent)
+		if userAgent == "" {
+			userAgent = "aakb/" + openalex.Version
+		}
+		fetchHTTP := httpx.NewClient(httpx.ClientOptions{
+			BaseClient: cfg.HTTPClient,
+			UserAgent:  userAgent,
+			Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
+			PublicOnly: true,
+		})
+		files, err := store.New(store.Config{
+			DownloadDir: cfg.DownloadDir,
+			CacheDir:    cfg.CacheDir,
+			HTTPClient:  fetchHTTP,
 		})
 		if err != nil {
-			return nil, newError(op, CodeConfig, "invalid OpenAlex configuration")
+			return nil, newError(op, CodeConfig, "invalid OpenAlex download configuration")
 		}
-		c.papers = newLegacyPapersProvider(papersClient)
+		c.papers = newOpenAlexProvider(openalex.NewClient(openalex.Config{
+			APIKey:     cfg.OpenAlexKey,
+			HTTPClient: cfg.HTTPClient,
+			UserAgent:  cfg.UserAgent,
+		}), files, archive)
 	}
 	return c, nil
 }

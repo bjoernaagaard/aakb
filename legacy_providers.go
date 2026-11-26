@@ -1,7 +1,6 @@
 package aakb
 
 import (
-	"cmp"
 	"context"
 	"maps"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
-	"github.com/SokolskyNikita/annas-mcp/papers"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 )
@@ -21,20 +19,12 @@ type legacyArchiveProvider struct {
 	healthHTTP *httpx.Client
 }
 
-type legacyPapersProvider struct {
-	client *papers.Client
-}
-
 func newLegacyArchiveProvider(client *anna.Client, baseURL string, healthHTTP *httpx.Client) *legacyArchiveProvider {
 	return &legacyArchiveProvider{
 		client:     client,
 		baseURL:    baseURL,
 		healthHTTP: healthHTTP,
 	}
-}
-
-func newLegacyPapersProvider(client *papers.Client) *legacyPapersProvider {
-	return &legacyPapersProvider{client: client}
 }
 
 func (p *legacyArchiveProvider) Search(ctx context.Context, query archiveSearchQuery) (*SearchResult, error) {
@@ -158,83 +148,6 @@ func (p *legacyArchiveProvider) ProbeHealth(ctx context.Context) UpstreamStatus 
 	return UpstreamStatus{Status: "challenged", HTTPStatus: resp.StatusCode}
 }
 
-func (p *legacyPapersProvider) Search(ctx context.Context, req openAlexSearchRequest) (*SearchResult, error) {
-	res, err := p.client.Search(ctx, papers.SearchOptions{
-		Query:            req.Query,
-		Title:            req.Title,
-		Author:           req.Author,
-		Year:             req.Year,
-		Language:         strings.Join(req.Languages, ","),
-		WorkType:         req.WorkType,
-		Sort:             string(req.Sort),
-		Page:             req.Page,
-		Limit:            req.Limit,
-		DownloadableOnly: req.DownloadableOnly,
-		AuthorID:         req.Filter.AuthorID,
-		InstitutionID:    req.Filter.InstitutionID,
-		RepositoryID:     req.Filter.RepositoryID,
-		Relation:         req.Filter.Relation,
-		WorkID:           req.Filter.WorkID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := &SearchResult{
-		Kind:              KindOpenAlex,
-		Total:             res.Total,
-		TotalIsLowerBound: res.TotalIsLowerBound,
-		MorePages:         res.MorePages,
-		Results:           convertAll(res.Results, workRecord),
-		PartialMatches:    convertAll(res.PartialMatches, workRecord),
-	}
-	if res.Work != nil && (!req.DownloadableOnly || res.Work.DownloadArgs != nil) {
-		out.Results = []Record{workRecord(res.Work)}
-		out.Total = 1
-	}
-	return out, nil
-}
-
-func (p *legacyPapersProvider) Details(ctx context.Context, id string) (*RecordDetails, error) {
-	work, err := p.client.Details(ctx, id, papers.DetailsOptions{Provider: "openalex"})
-	if err != nil {
-		return nil, err
-	}
-	return workDetails(work), nil
-}
-
-func (p *legacyPapersProvider) Read(ctx context.Context, req ReadRequest) (*Article, error) {
-	result, err := p.client.Read(ctx, papers.ReadOptions{
-		ID:           req.ID,
-		Continuation: req.Continuation,
-		Limit:        req.Limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return articleResult(result), nil
-}
-
-func (p *legacyPapersProvider) Download(ctx context.Context, req openAlexDownloadRequest) (*DownloadResult, error) {
-	res, err := p.client.Download(ctx, papers.DownloadOptions{
-		OpenAlexID: req.OpenAlexID,
-		Title:      req.Title,
-		Format:     req.Format,
-		Artifact:   req.Artifact,
-		LocationID: req.LocationID,
-		Version:    req.Version,
-	}, anna.ProgressFunc(req.Progress))
-	if err != nil {
-		return nil, err
-	}
-	out := downloadResult(res.DownloadResult)
-	if res.SHA256 != "" {
-		out.SHA256 = res.SHA256
-		out.Verification = VerificationSHA256
-	}
-	out.Reused = out.Reused || res.Reused
-	return out, nil
-}
-
 func legacySearchOptions(req archiveSearchQuery) anna.SearchOptions {
 	var fields []anna.SearchField
 	for _, f := range []anna.SearchField{
@@ -288,15 +201,6 @@ func recordStats(stats *anna.RecordStats) *Stats {
 	return new(Stats(*stats))
 }
 
-func workRecord(w *papers.Work) Record {
-	return Record{
-		Kind: "article", ID: w.OpenAlexID, Hash: w.Hash, Title: w.Title,
-		Authors: w.Authors, Publisher: w.Journal, Year: w.Year, Format: w.Format,
-		Size: w.Size, Sources: slices.Clone(w.Sources), DOI: w.DOI, URL: w.PageURL,
-		FastDownload: w.FastDownload, PossibleIssues: w.PossibleIssues, Stats: recordStats(w.Stats),
-	}
-}
-
 func bookRecord(b *anna.Book) Record {
 	return Record{
 		Kind: "book", Hash: b.Hash, Title: b.Title, Authors: b.Authors,
@@ -337,39 +241,6 @@ func recordDetails(d *anna.Details) *RecordDetails {
 		FastDownload: d.FastDownload, Stats: recordStats(d.Stats),
 		Problems: convertAll(d.Problems, func(p anna.Problem) Problem { return Problem(p) }),
 	}
-}
-
-func workDetails(w *papers.Work) *RecordDetails {
-	identifiers := map[string][]string{"openalex": {w.OpenAlexID}}
-	if w.DOI != "" {
-		identifiers["doi"] = []string{w.DOI}
-	}
-	out := &RecordDetails{
-		ID: w.OpenAlexID, Hash: w.Hash, URL: w.PageURL, Title: w.Title, Authors: w.Authors,
-		Publisher: w.Journal, Year: w.Year, Format: w.Format,
-		Description: shortenDescription(cmp.Or(w.Abstract, w.Description)),
-		Identifiers: identifiers, Sources: slices.Clone(w.Sources),
-		FastDownload: w.FastDownload, Stats: recordStats(w.Stats),
-	}
-	if w.Language != "" {
-		out.Languages = []string{w.Language}
-	}
-	if w.WorkType != "" {
-		out.Subjects = []string{w.WorkType}
-	}
-	return out
-}
-
-func articleResult(r *papers.ReadResult) *Article {
-	out := &Article{
-		OpenAlexID: r.OpenAlexID, Title: r.Title, URL: r.URL, Source: r.Source, Text: r.Text,
-		Passages: convertAll(r.Passages, func(p papers.Passage) Passage { return Passage(p) }),
-		SHA256:   r.Digest, Warnings: slices.Clone(r.Warnings),
-	}
-	if r.NextArgs != nil {
-		out.Continuation = r.NextArgs.Continuation
-	}
-	return out
 }
 
 func downloadResult(r anna.DownloadResult) *DownloadResult {
