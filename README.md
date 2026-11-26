@@ -235,6 +235,10 @@ Logs go to stderr, so MCP stdout stays clean.
 
 ```text
 cmd/aakb/              entrypoint: MCP stdio, HTTP server and CLI dispatch
+internal/annas/        Anna's Archive mirror failover, sessions, HTML and JSON client
+internal/openalex/     OpenAlex search, work details, TEI XML reader and downloads
+internal/httpx/        shared HTTPS transport, redirect guard, retries and secret redaction
+internal/store/        unified local download store with indexed reuse and atomic writes
 internal/config/       environment read once, in main
 internal/mcpserver/    tool, prompt and annotation registration
 internal/httpapi/      REST API, access guard and file downloads
