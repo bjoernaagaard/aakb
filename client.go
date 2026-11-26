@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bjoernaagaard/aakb/internal/annas"
+	"github.com/bjoernaagaard/aakb/internal/archive"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -42,11 +42,11 @@ func (m MirrorMode) String() string {
 	}
 }
 
-// Config configures a Client. Empty paths use ~/annas-archive and the aakb
+// Config configures a Client. Empty paths use ~/aakb-downloads and the aakb
 // subdirectory of os.UserCacheDir. Explicit paths must be absolute.
-// BaseURL defaults to https://annas-archive.gl. Mirrors lists additional archive
-// mirror hosts tried during failover, and AllowedTLDs restricts archive mirror
-// hosts to those top-level domains. A nil HTTPClient uses a hardened HTTPS
+// BaseURL is the preferred English-language archive origin. Mirrors supplies
+// alternate origins. Without either setting, archive operations are disabled.
+// AllowedTLDs restricts archive mirror hosts to those top-level domains. A nil HTTPClient uses a hardened HTTPS
 // transport. A nil Logger discards logs.
 type Config struct {
 	SecretKey     string `json:"-"`
@@ -103,7 +103,7 @@ func New(cfg Config) (*Client, error) {
 		if err != nil {
 			return nil, newError(op, CodeConfig, "cannot determine the home directory")
 		}
-		cfg.DownloadDir = filepath.Join(home, "annas-archive")
+		cfg.DownloadDir = filepath.Join(home, "aakb-downloads")
 	}
 	if cfg.CacheDir == "" {
 		cache, err := os.UserCacheDir()
@@ -144,7 +144,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, classifyError(op, err)
 	}
 
-	annasClient, err := annas.NewClient(annas.Config{
+	archiveClient, err := archive.NewClient(archive.Config{
 		BaseURL:       cfg.BaseURL,
 		Mirrors:       cfg.Mirrors,
 		AllowedTLDs:   cfg.AllowedTLDs,
@@ -163,7 +163,7 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	c := &Client{
-		archive:     newAnnasArchiveProvider(annasClient),
+		archive:     newArchiveProvider(archiveClient),
 		downloadDir: cfg.DownloadDir,
 	}
 	if strings.TrimSpace(cfg.OpenAlexKey) != "" {

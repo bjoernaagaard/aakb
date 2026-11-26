@@ -27,7 +27,7 @@ Docker, for the hosted HTTP server:
 
 ```bash
 docker build -t aakb .
-docker run --rm -p 127.0.0.1:8080:8080 -v aakb-data:/data -e ANNAS_SECRET_KEY -e AAKB_HTTP_TOKEN aakb
+docker run --rm -p 127.0.0.1:8080:8080 -v aakb-data:/data -e AAKB_ARCHIVE_BASE_URL -e AAKB_ARCHIVE_SECRET_KEY -e AAKB_HTTP_TOKEN aakb
 ```
 
 The image keeps downloads in `/data/downloads` and its session cache in
@@ -55,6 +55,8 @@ Streamable HTTP, stateless, for a hosted server:
 
 The same server also serves the web UI and the REST API, described below.
 
+Replace `https://mirror.example` with a trusted archive origin.
+
 Claude Desktop and Cursor, in `claude_desktop_config.json` or `.cursor/mcp.json`:
 
 ```json
@@ -62,7 +64,7 @@ Claude Desktop and Cursor, in `claude_desktop_config.json` or `.cursor/mcp.json`
   "mcpServers": {
     "aakb": {
       "command": "/absolute/path/to/aakb",
-      "env": { "ANNAS_SECRET_KEY": "your-secret-key" }
+      "env": { "AAKB_ARCHIVE_BASE_URL": "https://mirror.example", "AAKB_ARCHIVE_SECRET_KEY": "your-secret-key" }
     }
   }
 }
@@ -71,7 +73,7 @@ Claude Desktop and Cursor, in `claude_desktop_config.json` or `.cursor/mcp.json`
 Claude Code:
 
 ```bash
-claude mcp add aakb --env ANNAS_SECRET_KEY=your-secret-key -- /absolute/path/to/aakb
+claude mcp add aakb --env AAKB_ARCHIVE_BASE_URL=https://mirror.example --env AAKB_ARCHIVE_SECRET_KEY=your-secret-key -- /absolute/path/to/aakb
 ```
 
 VS Code, in `.vscode/mcp.json`. Note the `servers` key:
@@ -82,7 +84,7 @@ VS Code, in `.vscode/mcp.json`. Note the `servers` key:
     "aakb": {
       "type": "stdio",
       "command": "/absolute/path/to/aakb",
-      "env": { "ANNAS_SECRET_KEY": "your-secret-key" }
+      "env": { "AAKB_ARCHIVE_BASE_URL": "https://mirror.example", "AAKB_ARCHIVE_SECRET_KEY": "your-secret-key" }
     }
   }
 }
@@ -194,8 +196,8 @@ import (
 	"github.com/bjoernaagaard/aakb"
 )
 
-func search(ctx context.Context, key string) (*aakb.SearchResult, error) {
-	client, err := aakb.New(aakb.Config{SecretKey: key})
+func search(ctx context.Context, mirrorURL, key string) (*aakb.SearchResult, error) {
+	client, err := aakb.New(aakb.Config{BaseURL: mirrorURL, SecretKey: key})
 	if err != nil {
 		return nil, err
 	}
@@ -213,15 +215,15 @@ Without a caller deadline, operations have 60 seconds and downloads have
 
 | Variable | Purpose |
 | --- | --- |
-| `ANNAS_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. Falls back to `ANNAS_ARCHIVE_API_KEY`. |
-| `ANNAS_DOWNLOAD_PATH` | Download folder. Default `~/annas-archive`. |
-| `ANNAS_BASE_URL` | Preferred mirror. Default `https://annas-archive.gl`. The host you set receives your credentials, so use only one you trust. |
-| `ANNAS_MIRRORS` | Optional comma-separated archive mirror hosts to try during failover. These hosts can receive your credentials, so use only hosts you trust. |
-| `ANNAS_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |
-| `ANNAS_ACCOUNT_COOKIE` | Optional `aa_account_id2` cookie, used until it expires. |
+| `AAKB_ARCHIVE_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. |
+| `AAKB_ARCHIVE_DOWNLOAD_PATH` | Download folder. Default `~/aakb-downloads`. |
+| `AAKB_ARCHIVE_BASE_URL` | Preferred English-language mirror. Set this or `AAKB_ARCHIVE_MIRRORS` to enable archive operations. The host you set receives your credentials, so use only one you trust. |
+| `AAKB_ARCHIVE_MIRRORS` | Optional comma-separated archive mirror hosts to try during failover. These hosts can receive your credentials, so use only hosts you trust. |
+| `AAKB_ARCHIVE_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |
+| `AAKB_ARCHIVE_ACCOUNT_COOKIE` | Optional `aa_account_id2` cookie, used until it expires. |
 | `AAKB_CACHE_DIR` | Session and mirror health cache. Default `~/.cache/aakb`, mode `0700`. |
 | `OPENALEX_API_KEY` | Enables `article_read`, OpenAlex search and OpenAlex downloads. |
-| `ANNAS_ALLOWED_TLDS` | Optional comma-separated top-level domains, such as `gl,gd`. aakb refuses to start when `ANNAS_BASE_URL` or `ANNAS_MIRRORS` uses another one. |
+| `AAKB_ARCHIVE_ALLOWED_TLDS` | Optional comma-separated top-level domains, such as `gl,gd`. aakb refuses to start when `AAKB_ARCHIVE_BASE_URL` or `AAKB_ARCHIVE_MIRRORS` uses another one. |
 | `AAKB_TRUSTED_PROXIES` | Comma-separated proxy addresses or CIDR networks. `aakb serve` reads the client address from `X-Forwarded-For` only on connections from these. |
 | `AAKB_HTTP_TOKEN` | Bearer token that `aakb serve` requires when set. Without it, serve binds to `127.0.0.1` by default. Downloads are then readable at `/downloads/{name}` with the same token. |
 
@@ -235,7 +237,7 @@ Logs go to stderr, so MCP stdout stays clean.
 
 ```text
 cmd/aakb/              entrypoint: MCP stdio, HTTP server and CLI dispatch
-internal/annas/        Archive mirror failover, sessions, HTML and JSON client
+internal/archive/        Archive mirror failover, sessions, HTML and JSON client
 internal/openalex/     OpenAlex search, work details, TEI XML reader and downloads
 internal/httpx/        shared HTTPS transport, redirect guard, retries and secret redaction
 internal/store/        unified local download store with indexed reuse and atomic writes

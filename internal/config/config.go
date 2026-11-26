@@ -47,16 +47,12 @@ func (c Config) LogValue() slog.Value {
 	)
 }
 
-// FromEnv builds a Config from ANNAS_* variables, for compatibility with
-// the existing archive tools, plus AAKB_CACHE_DIR.
+// FromEnv reads the CLI and server settings from the environment.
 func FromEnv() (Config, error) {
 	loadDotEnv(".env.local")
 	loadDotEnv(".env")
 	cacheDir := os.Getenv("AAKB_CACHE_DIR")
-	if cacheDir == "" {
-		cacheDir = os.Getenv("ANNAS_MCP_CACHE_DIR")
-	}
-	downloadPath := os.Getenv("ANNAS_DOWNLOAD_PATH")
+	downloadPath := os.Getenv("AAKB_ARCHIVE_DOWNLOAD_PATH")
 	if downloadPath == "~" || strings.HasPrefix(downloadPath, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -65,26 +61,22 @@ func FromEnv() (Config, error) {
 		downloadPath = expandHome(downloadPath, home)
 	}
 	auto := true
-	if v := os.Getenv("ANNAS_AUTO_BASE_URL"); v != "" {
+	if v := os.Getenv("AAKB_ARCHIVE_AUTO_BASE_URL"); v != "" {
 		var err error
 		auto, err = strconv.ParseBool(v)
 		if err != nil {
-			return Config{}, fmt.Errorf("ANNAS_AUTO_BASE_URL must be a boolean")
+			return Config{}, fmt.Errorf("AAKB_ARCHIVE_AUTO_BASE_URL must be a boolean")
 		}
 	}
-	secretKey := os.Getenv("ANNAS_SECRET_KEY")
-	if secretKey == "" {
-		// Some credential stores name the same key ANNAS_ARCHIVE_API_KEY.
-		secretKey = os.Getenv("ANNAS_ARCHIVE_API_KEY")
-	}
-	baseURL := os.Getenv("ANNAS_BASE_URL")
-	mirrors := parseCSV(os.Getenv("ANNAS_MIRRORS"))
-	allowedTLDs := parseTLDs(os.Getenv("ANNAS_ALLOWED_TLDS"))
-	if err := checkTLD("ANNAS_BASE_URL", baseURL, allowedTLDs); err != nil {
+	secretKey := os.Getenv("AAKB_ARCHIVE_SECRET_KEY")
+	baseURL := os.Getenv("AAKB_ARCHIVE_BASE_URL")
+	mirrors := parseCSV(os.Getenv("AAKB_ARCHIVE_MIRRORS"))
+	allowedTLDs := parseTLDs(os.Getenv("AAKB_ARCHIVE_ALLOWED_TLDS"))
+	if err := checkTLD("AAKB_ARCHIVE_BASE_URL", baseURL, allowedTLDs); err != nil {
 		return Config{}, err
 	}
 	for _, mirror := range mirrors {
-		if err := checkTLD("ANNAS_MIRRORS", mirror, allowedTLDs); err != nil {
+		if err := checkTLD("AAKB_ARCHIVE_MIRRORS", mirror, allowedTLDs); err != nil {
 			return Config{}, err
 		}
 	}
@@ -95,7 +87,7 @@ func FromEnv() (Config, error) {
 	return Config{
 		TrustedProxies: proxies,
 		SecretKey:      secretKey,
-		AccountCookie:  os.Getenv("ANNAS_ACCOUNT_COOKIE"),
+		AccountCookie:  os.Getenv("AAKB_ARCHIVE_ACCOUNT_COOKIE"),
 		BaseURL:        baseURL,
 		Mirrors:        mirrors,
 		AllowedTLDs:    allowedTLDs,
@@ -160,13 +152,13 @@ func checkTLD(envName, rawHost string, allowed []string) error {
 	}
 	idx := strings.LastIndex(host, ".")
 	if idx < 0 || idx+1 >= len(host) {
-		return fmt.Errorf("%s has a top-level domain outside ANNAS_ALLOWED_TLDS", envName)
+		return fmt.Errorf("%s has a top-level domain outside AAKB_ARCHIVE_ALLOWED_TLDS", envName)
 	}
 	tld := strings.ToLower(host[idx+1:])
 	if slices.Contains(allowed, tld) {
 		return nil
 	}
-	return fmt.Errorf("%s has a top-level domain outside ANNAS_ALLOWED_TLDS", envName)
+	return fmt.Errorf("%s has a top-level domain outside AAKB_ARCHIVE_ALLOWED_TLDS", envName)
 }
 
 // parsePrefixes reads comma-separated addresses or CIDR networks.

@@ -1,4 +1,4 @@
-package annas
+package archive
 
 import (
 	"context"
@@ -40,9 +40,9 @@ const (
 )
 
 var (
-	officialHosts = []string{"annas-archive.gl", "annas-archive.pk", "annas-archive.gd"}
-	errNotUptime  = errors.New("did not answer with archive uptime status")
-	errAllFailed  = errors.New("every mirror failed its check")
+	errNotUptime          = errors.New("did not answer with archive uptime status")
+	errAllFailed          = errors.New("every mirror failed its check")
+	errNoMirrorConfigured = httpx.NewError(httpx.CodeConfig, "no_mirror_configured", "set BaseURL or Mirrors for archive access")
 )
 
 // HostState records what recent requests and probes observed about one mirror.
@@ -134,8 +134,7 @@ func roundUpSecond(d time.Duration) time.Duration {
 }
 
 // ParseBaseURL validates and canonicalizes a configured archive origin,
-// rejecting non-HTTPS schemes, credentials, paths, queries, fragments, and
-// language subdomains such as es.annas-archive.gl.
+// rejecting non-HTTPS schemes, credentials, paths, queries, and fragments.
 func ParseBaseURL(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -161,13 +160,6 @@ func ParseBaseURL(raw string) (string, error) {
 	if host == "" || strings.ContainsAny(host, "\\/\x00\r\n") {
 		return "", httpx.NewError(httpx.CodeConfig, "invalid_base_url", "base URL has an invalid hostname")
 	}
-	if official, ok := languageSubdomain(host); ok {
-		return "", httpx.NewError(
-			httpx.CodeConfig,
-			"language_subdomain",
-			fmt.Sprintf("%s is a translated version of %s; use %s, since aakb reads the archive in English", host, official, official),
-		)
-	}
 	if port := parsed.Port(); port != "" {
 		if strings.Contains(host, ":") {
 			host = "[" + host + "]"
@@ -175,17 +167,6 @@ func ParseBaseURL(raw string) (string, error) {
 		host += ":" + port
 	}
 	return host, nil
-}
-
-func languageSubdomain(host string) (string, bool) {
-	label, rest, found := strings.Cut(host, ".")
-	if !found || label == "www" || len(label) < 2 || len(label) > 3 || strings.Trim(label, "abcdefghijklmnopqrstuvwxyz") != "" {
-		return "", false
-	}
-	if slices.Contains(officialHosts, rest) {
-		return rest, true
-	}
-	return "", false
 }
 
 func normalizeTLDs(tlds []string) []string {
@@ -215,9 +196,7 @@ func hostAllowedByTLDs(host string, allowed []string) bool {
 	return slices.Contains(allowed, hostname[idx+1:])
 }
 
-// buildCandidates builds the deduplicated list of archive mirror hosts from
-// BaseURL, Mirrors, and official defaults, rejecting language subdomains and
-// enforcing AllowedTLDs on every candidate before any host can receive credentials.
+// buildCandidates validates and deduplicates configured archive origins.
 func buildCandidates(baseURL string, mirrors, allowedTLDs []string, autoBaseURL bool) ([]string, error) {
 	allowed := normalizeTLDs(allowedTLDs)
 
@@ -252,15 +231,12 @@ func buildCandidates(baseURL string, mirrors, allowedTLDs []string, autoBaseURL 
 			primary = extraHosts[0]
 		}
 		if primary == "" {
-			primary = officialHosts[0]
-			if !hostAllowedByTLDs(primary, allowed) {
-				return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", "default archive mirror top-level domain is not in AllowedTLDs")
-			}
+			return nil, nil
 		}
 		return []string{primary}, nil
 	}
 
-	candidates := make([]string, 0, 1+len(extraHosts)+len(officialHosts))
+	candidates := make([]string, 0, 1+len(extraHosts))
 	add := func(host string) {
 		if host != "" && !slices.Contains(candidates, host) {
 			candidates = append(candidates, host)
@@ -269,14 +245,6 @@ func buildCandidates(baseURL string, mirrors, allowedTLDs []string, autoBaseURL 
 	add(baseHost)
 	for _, host := range extraHosts {
 		add(host)
-	}
-	for _, host := range officialHosts {
-		if hostAllowedByTLDs(host, allowed) {
-			add(host)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", "no archive mirror matches AllowedTLDs")
 	}
 	return candidates, nil
 }
@@ -853,6 +821,9 @@ func (c *Client) ProbeHealth(ctx context.Context) HealthStatus {
 }
 
 func (c *Client) baseURLFor(ctx context.Context) (string, error) {
+	if c.baseURL == "" {
+		return "", errNoMirrorConfigured
+	}
 	if err := c.ensureSession(ctx); err != nil {
 		return "", err
 	}

@@ -6,28 +6,28 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/bjoernaagaard/aakb/internal/annas"
+	"github.com/bjoernaagaard/aakb/internal/archive"
 )
 
-// annasArchiveProvider implements archiveProvider on internal/annas with
+// remoteArchiveProvider implements archiveProvider on internal/archive with
 // result mapping to root types.
-type annasArchiveProvider struct {
-	client *annas.Client
+type remoteArchiveProvider struct {
+	client *archive.Client
 }
 
-func newAnnasArchiveProvider(client *annas.Client) *annasArchiveProvider {
-	return &annasArchiveProvider{client: client}
+func newArchiveProvider(client *archive.Client) *remoteArchiveProvider {
+	return &remoteArchiveProvider{client: client}
 }
 
-func (p *annasArchiveProvider) Search(ctx context.Context, query archiveSearchQuery) (*SearchResult, error) {
-	opts := annas.SearchOptions{
+func (p *remoteArchiveProvider) Search(ctx context.Context, query archiveSearchQuery) (*SearchResult, error) {
+	opts := archive.SearchOptions{
 		Page:         query.Page,
 		Sort:         string(query.Sort),
 		Format:       query.Formats,
 		Language:     query.Languages,
 		Source:       query.Sources,
 		Content:      query.Content,
-		Fields:       annasSearchFields(query),
+		Fields:       archiveSearchFields(query),
 		Descriptions: query.SearchDescriptions,
 	}
 	switch query.Kind {
@@ -36,13 +36,13 @@ func (p *annasArchiveProvider) Search(ctx context.Context, query archiveSearchQu
 		if err != nil {
 			return nil, err
 		}
-		return annasFilePage(KindBook, page, annasBookRecord), nil
+		return archiveFilePage(KindBook, page, archiveBookRecord), nil
 	case KindArticle:
 		page, err := p.client.SearchArticles(ctx, query.Query, opts)
 		if err != nil {
 			return nil, err
 		}
-		return annasFilePage(KindArticle, page, annasPaperRecord), nil
+		return archiveFilePage(KindArticle, page, archivePaperRecord), nil
 	case KindMetadata:
 		page, err := p.client.SearchMetadata(ctx, query.Query, opts)
 		if err != nil {
@@ -53,8 +53,8 @@ func (p *annasArchiveProvider) Search(ctx context.Context, query archiveSearchQu
 			Total:             page.Total,
 			TotalIsLowerBound: page.TotalIsLowerBound,
 			MorePages:         page.MorePages,
-			Results:           convertAll(page.Results, annasMetadataRecord),
-			PartialMatches:    convertAll(page.Partial, annasMetadataRecord),
+			Results:           convertAll(page.Results, archiveMetadataRecord),
+			PartialMatches:    convertAll(page.Partial, archiveMetadataRecord),
 		}, nil
 	case KindOpenAlex:
 		return nil, newError("search", CodeInvalidArgument, "kind must be book, article, metadata or openalex")
@@ -63,24 +63,24 @@ func (p *annasArchiveProvider) Search(ctx context.Context, query archiveSearchQu
 	}
 }
 
-func (p *annasArchiveProvider) LookupDOI(ctx context.Context, doi string) (*Record, error) {
+func (p *remoteArchiveProvider) LookupDOI(ctx context.Context, doi string) (*Record, error) {
 	paper, err := p.client.LookupDOI(ctx, doi)
 	if err != nil {
 		return nil, err
 	}
-	rec := annasPaperRecord(paper)
+	rec := archivePaperRecord(paper)
 	return &rec, nil
 }
 
-func (p *annasArchiveProvider) Details(ctx context.Context, id string) (*RecordDetails, error) {
+func (p *remoteArchiveProvider) Details(ctx context.Context, id string) (*RecordDetails, error) {
 	details, err := p.client.Details(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return annasDetails(details), nil
+	return archiveDetails(details), nil
 }
 
-func (p *annasArchiveProvider) FileStats(ctx context.Context, hashes []string) (map[string]Stats, error) {
+func (p *remoteArchiveProvider) FileStats(ctx context.Context, hashes []string) (map[string]Stats, error) {
 	raw, err := p.client.FileStats(ctx, hashes)
 	if err != nil {
 		return nil, err
@@ -92,8 +92,8 @@ func (p *annasArchiveProvider) FileStats(ctx context.Context, hashes []string) (
 	return out, nil
 }
 
-func (p *annasArchiveProvider) DownloadHash(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
-	res, err := p.client.DownloadHash(ctx, annas.DownloadRequest{
+func (p *remoteArchiveProvider) DownloadHash(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
+	res, err := p.client.DownloadHash(ctx, archive.DownloadRequest{
 		Hash:     req.Hash,
 		Title:    req.Title,
 		Format:   req.Format,
@@ -102,11 +102,11 @@ func (p *annasArchiveProvider) DownloadHash(ctx context.Context, req archiveDown
 	if err != nil {
 		return nil, err
 	}
-	return annasDownloadResult(res), nil
+	return archiveDownloadResult(res), nil
 }
 
-func (p *annasArchiveProvider) DownloadDOI(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
-	res, err := p.client.DownloadDOI(ctx, annas.DownloadDOIRequest{
+func (p *remoteArchiveProvider) DownloadDOI(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
+	res, err := p.client.DownloadDOI(ctx, archive.DownloadDOIRequest{
 		DOI:           req.DOI,
 		Hash:          req.Hash,
 		Title:         req.Title,
@@ -117,18 +117,18 @@ func (p *annasArchiveProvider) DownloadDOI(ctx context.Context, req archiveDownl
 	if err != nil {
 		return nil, err
 	}
-	return annasDownloadResult(res), nil
+	return archiveDownloadResult(res), nil
 }
 
-func (p *annasArchiveProvider) AccountStatus(ctx context.Context) (*Account, error) {
+func (p *remoteArchiveProvider) AccountStatus(ctx context.Context) (*Account, error) {
 	status, err := p.client.AccountStatus(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return annasAccount(status), nil
+	return archiveAccount(status), nil
 }
 
-func (p *annasArchiveProvider) ProbeHealth(ctx context.Context) UpstreamStatus {
+func (p *remoteArchiveProvider) ProbeHealth(ctx context.Context) UpstreamStatus {
 	health := p.client.ProbeHealth(ctx)
 	return UpstreamStatus{
 		Status:     health.Status,
@@ -136,9 +136,9 @@ func (p *annasArchiveProvider) ProbeHealth(ctx context.Context) UpstreamStatus {
 	}
 }
 
-func annasSearchFields(req archiveSearchQuery) []annas.SearchField {
-	var fields []annas.SearchField
-	for _, f := range []annas.SearchField{
+func archiveSearchFields(req archiveSearchQuery) []archive.SearchField {
+	var fields []archive.SearchField
+	for _, f := range []archive.SearchField{
 		{Name: "title", Value: req.Title},
 		{Name: "author", Value: req.Author},
 		{Name: "publisher", Value: req.Publisher},
@@ -151,7 +151,7 @@ func annasSearchFields(req archiveSearchQuery) []annas.SearchField {
 	return fields
 }
 
-func annasFilePage[T any](kind Kind, page annas.SearchPage[T], convert func(T) Record) *SearchResult {
+func archiveFilePage[T any](kind Kind, page archive.SearchPage[T], convert func(T) Record) *SearchResult {
 	return &SearchResult{
 		Kind:              kind,
 		Total:             page.Total,
@@ -173,26 +173,26 @@ func convertAll[T, U any](items []T, convert func(T) U) []U {
 	return out
 }
 
-func annasBookRecord(b *annas.Book) Record {
+func archiveBookRecord(b *archive.Book) Record {
 	return Record{
 		Kind: "book", Hash: b.Hash, Title: b.Title, Authors: b.Authors,
 		Publisher: b.Publisher, Edition: b.Edition, Year: b.Year,
 		Language: b.Language, Format: b.Format, Size: b.Size, Content: b.Content,
 		Sources: slices.Clone(b.Sources), DOI: b.DOI, URL: b.URL,
-		FastDownload: b.FastDownload, PossibleIssues: b.PossibleIssues, Stats: annasRecordStats(b.Stats),
+		FastDownload: b.FastDownload, PossibleIssues: b.PossibleIssues, Stats: archiveRecordStats(b.Stats),
 	}
 }
 
-func annasPaperRecord(p *annas.Paper) Record {
+func archivePaperRecord(p *archive.Paper) Record {
 	return Record{
 		Kind: "article", Hash: p.Hash, Title: p.Title, Authors: p.Authors,
 		Publisher: p.Journal, Year: p.Year, Format: p.Format, Size: p.Size,
 		Sources: slices.Clone(p.Sources), DOI: p.DOI, URL: p.PageURL,
-		FastDownload: p.FastDownload, PossibleIssues: p.PossibleIssues, Stats: annasRecordStats(p.Stats),
+		FastDownload: p.FastDownload, PossibleIssues: p.PossibleIssues, Stats: archiveRecordStats(p.Stats),
 	}
 }
 
-func annasMetadataRecord(m *annas.MetadataRecord) Record {
+func archiveMetadataRecord(m *archive.MetadataRecord) Record {
 	return Record{
 		Kind: "metadata", ID: m.ID, Title: m.Title, Authors: m.Authors,
 		Publisher: m.Publisher, Edition: m.Edition, Year: m.Year,
@@ -200,14 +200,14 @@ func annasMetadataRecord(m *annas.MetadataRecord) Record {
 	}
 }
 
-func annasRecordStats(stats *annas.RecordStats) *Stats {
+func archiveRecordStats(stats *archive.RecordStats) *Stats {
 	if stats == nil {
 		return nil
 	}
 	return new(Stats(*stats))
 }
 
-func annasDetails(d *annas.Details) *RecordDetails {
+func archiveDetails(d *archive.Details) *RecordDetails {
 	identifiers := maps.Clone(d.Identifiers)
 	for key, values := range identifiers {
 		identifiers[key] = slices.Clone(values)
@@ -217,12 +217,12 @@ func annasDetails(d *annas.Details) *RecordDetails {
 		Publisher: d.Publisher, Edition: d.Edition, Year: d.Year, Languages: slices.Clone(d.Languages),
 		Format: d.Format, SizeBytes: d.SizeBytes, Description: shortenDescription(d.Description),
 		Identifiers: identifiers, Subjects: slices.Clone(d.Subjects), Sources: slices.Clone(d.Sources),
-		FastDownload: d.FastDownload, Stats: annasRecordStats(d.Stats),
-		Problems: convertAll(d.Problems, func(p annas.Problem) Problem { return Problem(p) }),
+		FastDownload: d.FastDownload, Stats: archiveRecordStats(d.Stats),
+		Problems: convertAll(d.Problems, func(p archive.Problem) Problem { return Problem(p) }),
 	}
 }
 
-func annasDownloadResult(r *annas.DownloadResult) *DownloadResult {
+func archiveDownloadResult(r *archive.DownloadResult) *DownloadResult {
 	verification := VerificationNone
 	if r.MD5 != "" {
 		verification = VerificationMD5
@@ -241,7 +241,7 @@ func annasDownloadResult(r *annas.DownloadResult) *DownloadResult {
 	return out
 }
 
-func annasAccount(st *annas.AccountStatus) *Account {
+func archiveAccount(st *archive.AccountStatus) *Account {
 	out := &Account{
 		Member: st.Member, DownloadsLeft: st.DownloadsLeft, DownloadsLimit: st.DownloadsLimit,
 		WindowHours: st.WindowHours, Memberships: slices.Clone(st.Memberships),

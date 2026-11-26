@@ -1,4 +1,4 @@
-package annas
+package archive
 
 import (
 	"fmt"
@@ -381,12 +381,6 @@ func FacetValues(root *xhtml.Node, name string) []string {
 func IsArchivePage(root *xhtml.Node) bool {
 	if root == nil {
 		return false
-	}
-	title := strings.ToLower(nodeText(findFirstNode(root, func(node *xhtml.Node) bool {
-		return isElement(node, "title")
-	})))
-	if strings.Contains(title, "anna's archive") || strings.Contains(title, "anna’s archive") {
-		return true
 	}
 	return findFirstNode(root, func(node *xhtml.Node) bool {
 		if !isElement(node, "form") || nodeAttr(node, "action") != "/search" {

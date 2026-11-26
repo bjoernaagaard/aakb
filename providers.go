@@ -38,7 +38,7 @@ type archiveDownloadRequest struct {
 
 // Compile-time checks that the providers satisfy the seam interfaces.
 var (
-	_ archiveProvider = (*annasArchiveProvider)(nil)
+	_ archiveProvider = (*remoteArchiveProvider)(nil)
 	_ papersProvider  = (*openalexProvider)(nil)
 )
 

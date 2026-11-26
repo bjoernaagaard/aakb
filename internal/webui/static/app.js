@@ -283,7 +283,7 @@ function nextStepForError(err) {
       }
       return 'Wait a moment before trying again.';
     case 'CONFIG':
-      return 'Check the server configuration (such as ANNAS_SECRET_KEY or OPENALEX_API_KEY) and try again.';
+      return 'Check the server configuration (such as AAKB_ARCHIVE_SECRET_KEY or OPENALEX_API_KEY) and try again.';
     case 'INVALID_ARGUMENT':
       return 'Check your query or identifier and try again.';
     case 'NOT_FOUND':

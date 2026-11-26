@@ -10,7 +10,7 @@ FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /aakb /aakb
 COPY --from=build --chown=65534:65534 /data /data
-ENV AAKB_CACHE_DIR=/data/cache ANNAS_DOWNLOAD_PATH=/data/downloads
+ENV AAKB_CACHE_DIR=/data/cache AAKB_ARCHIVE_DOWNLOAD_PATH=/data/downloads
 VOLUME /data
 USER 65534:65534
 EXPOSE 8080

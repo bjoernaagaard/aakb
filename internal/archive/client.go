@@ -1,7 +1,7 @@
-// Package annas implements a first-party archive client built over
+// Package archive implements a first-party archive client built over
 // internal/httpx and internal/store, with TLD-enforced mirror selection,
 // singleflight session renewal, JSON record/stats endpoints, and fast downloads.
-package annas
+package archive
 
 import (
 	"context"
@@ -102,6 +102,10 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	var baseURL string
+	if len(candidates) > 0 {
+		baseURL = "https://" + candidates[0]
+	}
 
 	logger := cfg.Logger
 	if logger == nil {
@@ -137,7 +141,7 @@ func NewClient(cfg Config) (*Client, error) {
 		downloadDir:      cfg.DownloadDir,
 		cacheDir:         cfg.CacheDir,
 		autoBaseURL:      cfg.AutoBaseURL,
-		baseURL:          "https://" + candidates[0],
+		baseURL:          baseURL,
 		userAgent:        userAgent,
 		http:             guardedHTTP,
 		store:            fileStore,
@@ -175,6 +179,9 @@ func (c *Client) Candidates() []string {
 func (c *Client) requireArchiveAccess(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if c.baseURL == "" {
+		return errNoMirrorConfigured
 	}
 	if c.sessionCookie() == "" && c.secretKey == "" {
 		return httpx.NewError(httpx.CodeConfig, "missing_credentials", "SecretKey or AccountCookie is required for archive access")

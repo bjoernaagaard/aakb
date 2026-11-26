@@ -412,14 +412,14 @@ and -json-errors. Put -json-errors first to get JSON for flag errors too.
 Run a subcommand that takes flags with -h to list them.
 
 Environment:
-  ANNAS_SECRET_KEY      archive account secret key (required for search and download)
-  ANNAS_DOWNLOAD_PATH   download folder (default ~/annas-archive)
-  ANNAS_BASE_URL        preferred mirror (default https://annas-archive.gl)
-  ANNAS_MIRRORS         comma-separated extra mirror hosts for failover (use trusted hosts)
-  ANNAS_AUTO_BASE_URL   mirror failover, true or false (default true)
-  ANNAS_ACCOUNT_COOKIE  optional aa_account_id2 cookie
+  AAKB_ARCHIVE_SECRET_KEY      archive account secret key (required for search and download)
+  AAKB_ARCHIVE_DOWNLOAD_PATH   download folder (default ~/aakb-downloads)
+  AAKB_ARCHIVE_BASE_URL        preferred English-language mirror (configure a base URL or mirrors)
+  AAKB_ARCHIVE_MIRRORS         comma-separated extra mirror hosts for failover (use trusted hosts)
+  AAKB_ARCHIVE_AUTO_BASE_URL   mirror failover, true or false (default true)
+  AAKB_ARCHIVE_ACCOUNT_COOKIE  optional aa_account_id2 cookie
   OPENALEX_API_KEY      enables article_read and OpenAlex search/download
-  ANNAS_ALLOWED_TLDS    optional comma-separated top-level domains archive mirrors may use
+  AAKB_ARCHIVE_ALLOWED_TLDS    optional comma-separated top-level domains archive mirrors may use
   AAKB_HTTP_TOKEN       bearer token required by aakb serve when set
   AAKB_TRUSTED_PROXIES  proxy addresses or CIDR networks whose X-Forwarded-For is believed
   AAKB_CACHE_DIR        session and mirror cache (default ~/.cache/aakb)

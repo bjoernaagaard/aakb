@@ -4,6 +4,15 @@ This file lists the changes a user can notice in each release. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-26
+
+### Changed
+
+- Archive settings use the `AAKB_ARCHIVE_` prefix. Set `AAKB_ARCHIVE_BASE_URL`
+  or `AAKB_ARCHIVE_MIRRORS` to enable archive operations. Go callers configure
+  `BaseURL` or `Mirrors` directly.
+- The default download directory is `~/aakb-downloads`.
+
 ## [0.2.1] - 2026-11-26
 
 ### Changed
@@ -22,8 +31,8 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Native archive and OpenAlex clients inside `aakb`, replacing the
-  external `annas-mcp` dependency and `goquery`.
-- `ANNAS_MIRRORS` and `aakb.Config.Mirrors` for configuring additional
+  external archive client dependency and `goquery`.
+- `AAKB_ARCHIVE_MIRRORS` and `aakb.Config.Mirrors` for configuring additional
   failover mirror hosts.
 - `aakb.Config.AllowedTLDs`, `aakb.Config.HTTPClient`, `aakb.Config.UserAgent`,
   and `Client.UpstreamHealth`.
@@ -34,7 +43,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- `ANNAS_ALLOWED_TLDS` now filters every mirror candidate, including
+- `AAKB_ARCHIVE_ALLOWED_TLDS` now filters every mirror candidate, including
   failover mirrors, before credentials are sent.
 - `GET /healthz?upstream=1` probes the active mirror through `/dyn/up/`
   and mirror health state instead of an unauthenticated `HEAD` request.
@@ -45,7 +54,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Removed
 
-- Dependency on `github.com/SokolskyNikita/annas-mcp`,
+- Dependency on the external archive client,
   `github.com/PuerkitoBio/goquery`, and `github.com/andybalholm/cascadia`.
 
 ## [0.1.1] - 2026-11-25
@@ -64,7 +73,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Progress notifications from the MCP `download` tool.
 - Value ranges and allowed choices in the MCP tool schemas.
 - `aakb health`, which the Docker health check now uses.
-- `.env.local` loading and `ANNAS_ALLOWED_TLDS`.
+- `.env.local` loading and `AAKB_ARCHIVE_ALLOWED_TLDS`.
 - `aakb version` prints the commit and its time.
 
 ### Changed
@@ -80,6 +89,7 @@ search, article reading and downloads behind `OPENALEX_API_KEY`, bearer
 token sign-in, the request limit for each client, and
 `GET /downloads/{name}`.
 
+[0.3.0]: https://github.com/bjoernaagaard/aakb/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bjoernaagaard/aakb/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/bjoernaagaard/aakb/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/bjoernaagaard/aakb/compare/v0.1.0...v0.1.1
