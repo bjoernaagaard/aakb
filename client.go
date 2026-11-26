@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
 
+	"github.com/bjoernaagaard/aakb/internal/annas"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -21,7 +21,6 @@ import (
 const (
 	defaultTimeout         = 60 * time.Second
 	defaultDownloadTimeout = 30 * time.Minute
-	defaultBaseURL         = "https://annas-archive.gl"
 )
 
 var defaultMirrorHosts = []string{
@@ -128,58 +127,71 @@ func New(cfg Config) (*Client, error) {
 	if !absolutePath(cfg.CacheDir) {
 		return nil, newError(op, CodeConfig, "CacheDir must be an absolute path")
 	}
-	effectiveBaseURL, err := validateMirrorPolicy(cfg.BaseURL, cfg.Mirrors, cfg.AllowedTLDs, cfg.Mirror)
-	if err != nil {
-		return nil, err
-	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 	if err := os.MkdirAll(cfg.CacheDir, 0o700); err != nil {
 		return nil, newError(op, CodeInternal, "cannot create the cache directory")
 	}
+
+	userAgent := strings.TrimSpace(cfg.UserAgent)
+	if userAgent == "" {
+		userAgent = "aakb/" + openalex.Version
+	}
+	storeHTTP := httpx.NewClient(httpx.ClientOptions{
+		BaseClient: cfg.HTTPClient,
+		UserAgent:  userAgent,
+		Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
+		PublicOnly: true,
+	})
+	files, err := store.New(store.Config{
+		DownloadDir: cfg.DownloadDir,
+		CacheDir:    cfg.CacheDir,
+		HTTPClient:  storeHTTP,
+	})
+	if err != nil {
+		return nil, classify(context.Background(), op, err)
+	}
+
+	annasClient, err := annas.NewClient(annas.Config{
+		BaseURL:       cfg.BaseURL,
+		Mirrors:       cfg.Mirrors,
+		AllowedTLDs:   cfg.AllowedTLDs,
+		AutoBaseURL:   cfg.Mirror == MirrorFailover,
+		SecretKey:     cfg.SecretKey,
+		AccountCookie: cfg.AccountCookie,
+		DownloadDir:   cfg.DownloadDir,
+		CacheDir:      cfg.CacheDir,
+		HTTPClient:    cfg.HTTPClient,
+		UserAgent:     cfg.UserAgent,
+		Logger:        cfg.Logger,
+		Store:         files,
+	})
+	if err != nil {
+		return nil, classify(context.Background(), op, err)
+	}
+
+	legacyAuto := cfg.Mirror == MirrorFailover && allOfficialAllowed(annasClient.Candidates())
 	archiveClient, err := anna.NewClient(anna.Config{
-		BaseURL:       effectiveBaseURL,
+		BaseURL:       annasClient.PrimaryOrigin(),
 		SecretKey:     cfg.SecretKey,
 		AccountCookie: cfg.AccountCookie,
 		DownloadPath:  cfg.DownloadDir,
 		SessionFile:   filepath.Join(cfg.CacheDir, "session.json"),
-		AutoBaseURL:   cfg.Mirror == MirrorFailover,
+		AutoBaseURL:   legacyAuto,
 		HTTPClient:    cfg.HTTPClient,
 		Logger:        cfg.Logger,
 	})
 	if err != nil {
 		return nil, newError(op, CodeConfig, "invalid Anna's Archive configuration")
 	}
-	healthHTTP := httpx.NewClient(httpx.ClientOptions{
-		BaseClient: cfg.HTTPClient,
-		UserAgent:  cfg.UserAgent,
-		Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
-	})
-	archive := newLegacyArchiveProvider(archiveClient, effectiveBaseURL, healthHTTP)
+
+	archive := newLegacyArchiveProvider(annasClient, archiveClient)
 	c := &Client{
 		archive:     archive,
 		downloadDir: cfg.DownloadDir,
 	}
 	if strings.TrimSpace(cfg.OpenAlexKey) != "" {
-		userAgent := strings.TrimSpace(cfg.UserAgent)
-		if userAgent == "" {
-			userAgent = "aakb/" + openalex.Version
-		}
-		fetchHTTP := httpx.NewClient(httpx.ClientOptions{
-			BaseClient: cfg.HTTPClient,
-			UserAgent:  userAgent,
-			Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
-			PublicOnly: true,
-		})
-		files, err := store.New(store.Config{
-			DownloadDir: cfg.DownloadDir,
-			CacheDir:    cfg.CacheDir,
-			HTTPClient:  fetchHTTP,
-		})
-		if err != nil {
-			return nil, newError(op, CodeConfig, "invalid OpenAlex download configuration")
-		}
 		c.papers = newOpenAlexProvider(openalex.NewClient(openalex.Config{
 			APIKey:     cfg.OpenAlexKey,
 			HTTPClient: cfg.HTTPClient,
@@ -189,84 +201,13 @@ func New(cfg Config) (*Client, error) {
 	return c, nil
 }
 
-func validateMirrorPolicy(baseURL string, mirrors, allowedTLDs []string, mode MirrorMode) (string, error) {
-	const op = "new"
-	baseURL = strings.TrimSpace(baseURL)
-	cleanedMirrors := cleanList(mirrors)
-	allowed := normalizeTLDs(allowedTLDs)
-
-	if len(allowed) > 0 {
-		if baseURL != "" && !hostAllowedByTLDs(baseURL, allowed) {
-			return "", newError(op, CodeConfig, "BaseURL top-level domain is not in AllowedTLDs")
-		}
-		for _, mirror := range cleanedMirrors {
-			if !hostAllowedByTLDs(mirror, allowed) {
-				return "", newError(op, CodeConfig, "Mirrors contains a top-level domain outside AllowedTLDs")
-			}
-		}
-		if baseURL == "" && len(cleanedMirrors) == 0 {
-			if mode != MirrorFixed {
-				for _, candidate := range defaultMirrorHosts {
-					if hostAllowedByTLDs(candidate, allowed) {
-						return "https://" + candidate, nil
-					}
-				}
-				return "", newError(op, CodeConfig, "no archive mirror matches AllowedTLDs")
-			}
-			if !hostAllowedByTLDs(defaultBaseURL, allowed) {
-				return "", newError(op, CodeConfig, "default archive mirror top-level domain is not in AllowedTLDs")
-			}
-		}
-	}
-
-	if baseURL == "" && len(cleanedMirrors) > 0 {
-		return cleanedMirrors[0], nil
-	}
-	return baseURL, nil
-}
-
-func cleanList(values []string) []string {
-	var out []string
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
-func normalizeTLDs(tlds []string) []string {
-	var out []string
-	for _, tld := range tlds {
-		cleaned := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tld), "."))
-		if cleaned != "" && !slices.Contains(out, cleaned) {
-			out = append(out, cleaned)
-		}
-	}
-	return out
-}
-
-func hostAllowedByTLDs(raw string, allowed []string) bool {
-	host := strings.TrimSpace(raw)
-	if strings.Contains(host, "://") {
-		u, err := url.Parse(host)
-		if err != nil || u.Hostname() == "" {
+func allOfficialAllowed(candidates []string) bool {
+	for _, host := range defaultMirrorHosts {
+		if !slices.Contains(candidates, host) {
 			return false
 		}
-		host = u.Hostname()
-	} else {
-		u, err := url.Parse("https://" + host)
-		if err != nil || u.Hostname() == "" {
-			return false
-		}
-		host = u.Hostname()
 	}
-	idx := strings.LastIndex(host, ".")
-	if idx < 0 || idx+1 >= len(host) {
-		return false
-	}
-	tld := strings.ToLower(host[idx+1:])
-	return slices.Contains(allowed, tld)
+	return true
 }
 
 func absolutePath(path string) bool {

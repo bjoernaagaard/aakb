@@ -243,6 +243,11 @@ func (c *Client) validateRequestURL(u *url.URL) error {
 }
 
 func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
+	if c.onRedirect != nil {
+		if err := c.onRedirect(req, via); err != nil {
+			return err
+		}
+	}
 	if len(via) >= c.maxRedirs {
 		return WrapError(CodeUpstream, "too_many_redirects", "upstream exceeded the redirect limit", ErrRedirectRefused)
 	}
@@ -261,11 +266,6 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 					return WrapError(CodeUpstream, "key_redirect_refused", "refused to redirect an authenticated request to another origin", ErrRedirectRefused)
 				}
 			}
-		}
-	}
-	if c.onRedirect != nil {
-		if err := c.onRedirect(req, via); err != nil {
-			return err
 		}
 	}
 	if c.baseCheck != nil {

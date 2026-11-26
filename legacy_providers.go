@@ -3,27 +3,23 @@ package aakb
 import (
 	"context"
 	"maps"
-	"net/http"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/SokolskyNikita/annas-mcp/anna"
 
-	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/annas"
 )
 
 type legacyArchiveProvider struct {
-	client     *anna.Client
-	baseURL    string
-	healthHTTP *httpx.Client
+	annas  *annas.Client
+	client *anna.Client
 }
 
-func newLegacyArchiveProvider(client *anna.Client, baseURL string, healthHTTP *httpx.Client) *legacyArchiveProvider {
+func newLegacyArchiveProvider(annasClient *annas.Client, legacyClient *anna.Client) *legacyArchiveProvider {
 	return &legacyArchiveProvider{
-		client:     client,
-		baseURL:    baseURL,
-		healthHTTP: healthHTTP,
+		annas:  annasClient,
+		client: legacyClient,
 	}
 }
 
@@ -65,15 +61,15 @@ func (p *legacyArchiveProvider) LookupDOI(ctx context.Context, doi string) (*Rec
 }
 
 func (p *legacyArchiveProvider) Details(ctx context.Context, id string) (*RecordDetails, error) {
-	details, err := p.client.Details(ctx, id, 0)
+	details, err := p.annas.Details(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return recordDetails(details), nil
+	return annasDetails(details), nil
 }
 
 func (p *legacyArchiveProvider) FileStats(ctx context.Context, hashes []string) (map[string]Stats, error) {
-	raw, err := p.client.FileStats(ctx, hashes)
+	raw, err := p.annas.FileStats(ctx, hashes)
 	if err != nil {
 		return nil, err
 	}
@@ -85,22 +81,16 @@ func (p *legacyArchiveProvider) FileStats(ctx context.Context, hashes []string) 
 }
 
 func (p *legacyArchiveProvider) DownloadHash(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
-	progress := anna.ProgressFunc(req.Progress)
-	res, err := p.client.DownloadBook(ctx, &anna.Book{Hash: req.Hash, Title: req.Title, Format: req.Format}, 0, progress)
-	if err != nil && ctx.Err() == nil && anna.CodeOf(err) == anna.NotFound {
-		article := anna.ArticleDownloadOptions{Hash: req.Hash, Title: req.Title, Format: req.Format}
-		fallback, fallbackErr := p.client.DownloadArticle(ctx, article, 0, progress)
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if fallbackErr == nil {
-			return downloadResult(fallback), nil
-		}
-	}
+	res, err := p.annas.DownloadHash(ctx, annas.DownloadRequest{
+		Hash:     req.Hash,
+		Title:    req.Title,
+		Format:   req.Format,
+		Progress: req.Progress,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return downloadResult(res), nil
+	return annasDownloadResult(res), nil
 }
 
 func (p *legacyArchiveProvider) DownloadDOI(ctx context.Context, req archiveDownloadRequest) (*DownloadResult, error) {
@@ -126,26 +116,11 @@ func (p *legacyArchiveProvider) AccountStatus(ctx context.Context) (*Account, er
 }
 
 func (p *legacyArchiveProvider) ProbeHealth(ctx context.Context) UpstreamStatus {
-	base := strings.TrimSpace(p.baseURL)
-	if base == "" {
-		base = defaultBaseURL
+	health := p.annas.ProbeHealth(ctx)
+	return UpstreamStatus{
+		Status:     health.Status,
+		HTTPStatus: health.HTTPStatus,
 	}
-	if !strings.Contains(base, "://") {
-		base = "https://" + base
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base, nil)
-	if err != nil {
-		return UpstreamStatus{Status: "unreachable"}
-	}
-	resp, err := p.healthHTTP.Do(req)
-	if err != nil {
-		return UpstreamStatus{Status: "unreachable"}
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // HEAD probe response body is empty
-	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest {
-		return UpstreamStatus{Status: "ok", HTTPStatus: resp.StatusCode}
-	}
-	return UpstreamStatus{Status: "challenged", HTTPStatus: resp.StatusCode}
 }
 
 func legacySearchOptions(req archiveSearchQuery) anna.SearchOptions {
@@ -201,6 +176,13 @@ func recordStats(stats *anna.RecordStats) *Stats {
 	return new(Stats(*stats))
 }
 
+func annasRecordStats(stats *annas.RecordStats) *Stats {
+	if stats == nil {
+		return nil
+	}
+	return new(Stats(*stats))
+}
+
 func bookRecord(b *anna.Book) Record {
 	return Record{
 		Kind: "book", Hash: b.Hash, Title: b.Title, Authors: b.Authors,
@@ -228,7 +210,7 @@ func metadataRecord(m *anna.MetadataRecord) Record {
 	}
 }
 
-func recordDetails(d *anna.Details) *RecordDetails {
+func annasDetails(d *annas.Details) *RecordDetails {
 	identifiers := maps.Clone(d.Identifiers)
 	for key, values := range identifiers {
 		identifiers[key] = slices.Clone(values)
@@ -238,9 +220,28 @@ func recordDetails(d *anna.Details) *RecordDetails {
 		Publisher: d.Publisher, Edition: d.Edition, Year: d.Year, Languages: slices.Clone(d.Languages),
 		Format: d.Format, SizeBytes: d.SizeBytes, Description: shortenDescription(d.Description),
 		Identifiers: identifiers, Subjects: slices.Clone(d.Subjects), Sources: slices.Clone(d.Sources),
-		FastDownload: d.FastDownload, Stats: recordStats(d.Stats),
-		Problems: convertAll(d.Problems, func(p anna.Problem) Problem { return Problem(p) }),
+		FastDownload: d.FastDownload, Stats: annasRecordStats(d.Stats),
+		Problems: convertAll(d.Problems, func(p annas.Problem) Problem { return Problem(p) }),
 	}
+}
+
+func annasDownloadResult(r *annas.DownloadResult) *DownloadResult {
+	verification := VerificationNone
+	if r.MD5 != "" {
+		verification = VerificationMD5
+	}
+	name := r.Name
+	if name == "" && r.Path != "" {
+		name = filepath.Base(r.Path)
+	}
+	out := &DownloadResult{
+		Path: r.Path, Name: name, Bytes: r.Bytes, Verification: verification,
+		MD5: r.MD5, Reused: r.Reused,
+	}
+	if r.DownloadsLeft != nil {
+		out.DownloadsLeft = new(*r.DownloadsLeft)
+	}
+	return out
 }
 
 func downloadResult(r anna.DownloadResult) *DownloadResult {
