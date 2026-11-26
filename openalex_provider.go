@@ -33,6 +33,9 @@ func (p *openalexProvider) Search(ctx context.Context, req openAlexSearchRequest
 	if openalex.IsWorkID(req.Query) || openalex.NormalizeDOI(req.Query) != "" {
 		return p.searchExact(ctx, req)
 	}
+	// OpenAlex full-text hosting covers a fraction of works, so the query
+	// stays unfiltered and DownloadableOnly applies to the returned page
+	// locally: hosted PDF or open-access external PDF.
 	workTypes := parseWorkTypes(req.WorkType, req.Filter.Relation)
 	remote := openalex.SearchOptions{
 		Query: req.Query, Title: req.Title, Author: req.Author,
@@ -42,40 +45,61 @@ func (p *openalexProvider) Search(ctx context.Context, req openAlexSearchRequest
 		WorkTypes: workTypes,
 		Sort:      string(req.Sort),
 		Page:      req.Page, PerPage: req.Limit,
-		DownloadableOnly: req.DownloadableOnly,
-		Relation:         req.Filter.Relation, WorkID: req.Filter.WorkID,
+		Relation: req.Filter.Relation, WorkID: req.Filter.WorkID,
 	}
 	page, err := p.client.Search(ctx, remote)
 	if err != nil {
-		if req.Page == 1 && fallbackAllowed(ctx, err) {
-			return p.searchArchiveFallback(ctx, req)
+		if req.Page == 1 && p.archive != nil && !openAlexOnly(req) && fallbackAllowed(ctx, err) {
+			if fallback, fallbackErr := p.searchArchiveFallback(ctx, req); fallbackErr == nil {
+				return fallback, nil
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 		}
 		return nil, err
 	}
-	if page.Meta.Count == 0 && req.Page == 1 {
-		return p.searchArchiveFallback(ctx, req)
+	if page.Meta.Count == 0 && req.Page == 1 && p.archive != nil && !openAlexOnly(req) {
+		if fallback, fallbackErr := p.searchArchiveFallback(ctx, req); fallbackErr == nil {
+			return fallback, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 	out := &SearchResult{Kind: KindOpenAlex, Total: page.Meta.Count, Results: []Record{}}
 	for i := range page.Results {
-		work := mapOpenAlexWork(&page.Results[i])
 		if req.DownloadableOnly && !openalex.HasDownload(&page.Results[i]) {
 			continue
 		}
-		out.Results = append(out.Results, work)
+		out.Results = append(out.Results, mapOpenAlexWork(&page.Results[i]))
 	}
 	if req.DownloadableOnly {
-		out.Total = len(out.Results)
 		out.TotalIsLowerBound = true
+		out.Total = len(out.Results)
 	}
 	out.MorePages = moreOpenAlexPages(page.Meta.Count, "", req.Page, req.Limit)
 	return out, nil
 }
 
+// openAlexOnly reports whether the request carries an OpenAlex-only filter
+// that Anna's Archive cannot serve, so failures must not fall back to it.
+func openAlexOnly(req openAlexSearchRequest) bool {
+	return strings.TrimSpace(req.WorkType) != "" || !req.Filter.empty() ||
+		openalex.IsWorkID(req.Query) || strings.Contains(req.Year, "-") ||
+		req.Sort == SortMostCited
+}
+
 func (p *openalexProvider) searchExact(ctx context.Context, req openAlexSearchRequest) (*SearchResult, error) {
 	work, err := p.client.Lookup(ctx, req.Query)
 	if err != nil {
-		if fallbackAllowed(ctx, err) {
-			return p.searchArchiveFallback(ctx, req)
+		if p.archive != nil && !openAlexOnly(req) && fallbackAllowed(ctx, err) {
+			if fallback, fallbackErr := p.searchArchiveFallback(ctx, req); fallbackErr == nil {
+				return fallback, nil
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 		}
 		return nil, err
 	}
@@ -88,6 +112,21 @@ func (p *openalexProvider) searchExact(ctx context.Context, req openAlexSearchRe
 }
 
 func (p *openalexProvider) searchArchiveFallback(ctx context.Context, req openAlexSearchRequest) (*SearchResult, error) {
+	// An exact DOI resolves through the archive's DOI lookup, not a search.
+	if doi := openalex.NormalizeDOI(req.Query); doi != "" {
+		rec, err := p.archive.LookupDOI(ctx, req.Query)
+		if err != nil {
+			return nil, err
+		}
+		out := &SearchResult{Kind: KindOpenAlex, Total: 1, Results: []Record{*rec}}
+		if req.DownloadableOnly {
+			out.Results = filterDownloadable(out.Results)
+			out.Total = len(out.Results)
+		}
+		out.Results = dedupe(out.Results)
+		normalizeSearch(SearchRequest{Page: req.Page, Limit: req.Limit}, out)
+		return out, nil
+	}
 	out, err := p.archive.Search(ctx, archiveSearchQuery{
 		Kind: KindArticle, Query: req.Query, Title: req.Title, Author: req.Author,
 		Year: req.Year, Languages: req.Languages, Sort: req.Sort, Page: req.Page,
@@ -95,6 +134,7 @@ func (p *openalexProvider) searchArchiveFallback(ctx context.Context, req openAl
 	if err != nil {
 		return nil, err
 	}
+	out.Kind = KindOpenAlex
 	if req.DownloadableOnly {
 		out.Results = filterDownloadable(out.Results)
 		out.PartialMatches = filterDownloadable(out.PartialMatches)
@@ -294,7 +334,7 @@ func openAlexBaseRecord(work *openalex.Work, authors string) Record {
 	return Record{
 		Kind: "article", ID: work.ShortID(), Title: work.DisplayName,
 		Authors: authors, Publisher: journal, Year: year,
-		DOI: openalex.NormalizeDOI(work.DOI), URL: openalex.PublicURL(work.LandingURL()),
+		DOI: openalex.NormalizeDOI(work.DOI), URL: openalex.PublicLandingURL(work),
 	}
 }
 
@@ -304,7 +344,8 @@ func openAlexDetails(work *openalex.Work) *RecordDetails {
 		identifiers["doi"] = []string{doi}
 	}
 	out := &RecordDetails{
-		ID: work.ShortID(), URL: openalex.PublicURL(work.LandingURL()), Title: work.DisplayName,
+		ID: work.ShortID(), URL: openalex.PublicLandingURL(work), Title: work.DisplayName,
+		Authors:   fullAuthors(work),
 		Publisher: openAlexJournal(work), Year: openAlexYear(work),
 		Description: shortenDescription(work.Abstract()),
 		Identifiers: identifiers,
@@ -332,20 +373,17 @@ func openAlexYear(work *openalex.Work) string {
 	return ""
 }
 
+// openAlexDownloadResult maps a stored OpenAlex copy. OpenAlex downloads are
+// content fingerprints, not Anna's Archive checksum matches, so verification
+// is SHA-256 and no MD5 is reported.
 func openAlexDownloadResult(result openalex.DownloadResult) *DownloadResult {
 	out := &DownloadResult{
 		Path: result.Path, Name: result.Name, Bytes: result.Bytes,
 		Verification: VerificationNone, Reused: result.Reused,
 	}
-	if result.MD5 != "" {
-		out.MD5 = result.MD5
-		out.Verification = VerificationMD5
-	}
 	if result.SHA256 != "" {
 		out.SHA256 = result.SHA256
-		if out.Verification == VerificationNone {
-			out.Verification = VerificationSHA256
-		}
+		out.Verification = VerificationSHA256
 	}
 	return out
 }

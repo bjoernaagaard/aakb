@@ -112,6 +112,11 @@ func absolutePath(path string) bool {
 	return path != "" && filepath.IsAbs(path) && !strings.ContainsRune(path, 0)
 }
 
+// DownloadDir returns the absolute directory where downloaded files live.
+func (s *Store) DownloadDir() string {
+	return s.downloadDir
+}
+
 // LookupMD5 returns a stat-verified (or digest-reverified) local file matching md5Hex.
 func (s *Store) LookupMD5(ctx context.Context, md5Hex string) (Result, bool) {
 	md5Hex = strings.ToLower(strings.TrimSpace(md5Hex))

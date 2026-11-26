@@ -192,12 +192,16 @@ func DownloadCandidates(work *Work, options DownloadOptions) ([]DownloadCandidat
 }
 
 // DownloadArtifact stores one ranked copy through the shared download store.
-// Hosted artifacts authenticate with the OpenAlex key; external copies are
-// plain public HTTPS fetches. The manifest key binds the work, route,
-// location, version, and artifact.
+// Hosted artifacts authenticate with the OpenAlex key on a public-only client;
+// external copies use a nil fetch so the store's own public-only client runs
+// the transfer. The manifest key binds the work, route, location, version,
+// and artifact.
 func (c *Client) DownloadArtifact(ctx context.Context, st *store.Store, work *Work, candidate DownloadCandidate, title, format string, progress func(done, total int64)) (DownloadResult, error) {
 	if err := validateArtifactURL(candidate.URL, candidate.Hosted); err != nil {
 		return DownloadResult{}, err
+	}
+	if candidate.Hosted && c.key == "" {
+		return DownloadResult{}, httpx.NewError(httpx.CodeConfig, "missing_key", "set OPENALEX_API_KEY to use OpenAlex")
 	}
 	if title == "" {
 		title = work.DisplayName
@@ -212,20 +216,21 @@ func (c *Client) DownloadArtifact(ctx context.Context, st *store.Store, work *Wo
 		format = extension
 	}
 	key := strings.Join([]string{"openalex:" + work.ShortID(), candidate.Route, candidate.Location, candidate.Version, format}, "|")
-	fetch := func(ctx context.Context, rawURL string, extra http.Header) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-		if err != nil {
-			return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_url", "invalid download URL")
-		}
-		if candidate.Hosted {
-			req.Header.Set("Authorization", "Bearer "+c.key)
-		}
-		for name, values := range extra {
-			for _, value := range values {
-				req.Header.Add(name, value)
+	var fetch store.FetchFunc
+	if candidate.Hosted {
+		fetch = func(ctx context.Context, rawURL string, extra http.Header) (*http.Response, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+			if err != nil {
+				return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_url", "invalid download URL")
 			}
+			req.Header.Set("Authorization", "Bearer "+c.key)
+			for name, values := range extra {
+				for _, value := range values {
+					req.Header.Add(name, value)
+				}
+			}
+			return c.fetch.Do(req)
 		}
-		return c.http.Do(req)
 	}
 	result, err := st.Download(ctx, store.TransferRequest{
 		Key:        key,
@@ -299,14 +304,14 @@ func locationURL(location Location) string {
 	return location.PDFURL
 }
 
-// HasDownload reports whether OpenAlex advertises a directly fetchable copy
-// for work: hosted content or an open-access external PDF.
+// HasDownload reports whether OpenAlex advertises a directly fetchable PDF
+// for work: hosted content or an open-access external PDF. Structured-text
+// copies alone do not count because the default download target is PDF.
 func HasDownload(work *Work) bool {
 	if work == nil {
 		return false
 	}
-	if (work.HasContent.PDF && work.ContentURLs.PDF != "") ||
-		(work.HasContent.GrobidXML && work.ContentURLs.GrobidXML != "") {
+	if work.HasContent.PDF && work.ContentURLs.PDF != "" {
 		return true
 	}
 	return slices.ContainsFunc(work.Locations, eligibleLocation)
@@ -320,11 +325,17 @@ func eligibleLocation(location Location) bool {
 }
 
 // validateArtifactURL confines hosted artifacts to the official OpenAlex
-// content host and requires public credential-free HTTPS everywhere.
+// content host and requires public credential-free HTTPS everywhere. Loopback,
+// private, and reserved hosts never pass, even before DNS pinning at dial time.
 func validateArtifactURL(raw string, hosted bool) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
-		parsed.User != nil || parsed.Fragment != "" {
+	if err != nil {
+		return httpx.NewError(httpx.CodeInvalidArgument, "invalid_artifact_url", "artifact URL must be public HTTPS without credentials")
+	}
+	if err := httpx.ValidatePublicHTTPSURL(parsed); err != nil {
+		return httpx.NewError(httpx.CodeInvalidArgument, "invalid_artifact_url", "artifact URL must be public HTTPS without credentials")
+	}
+	if parsed.Fragment != "" {
 		return httpx.NewError(httpx.CodeInvalidArgument, "invalid_artifact_url", "artifact URL must be public HTTPS without credentials")
 	}
 	if hosted && (parsed.Host != "content.openalex.org" || !strings.HasPrefix(parsed.Path, "/works/")) {

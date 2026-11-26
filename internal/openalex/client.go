@@ -6,6 +6,7 @@ package openalex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -45,10 +46,11 @@ type Config struct {
 
 // Client queries the OpenAlex Works API. It is safe for concurrent use.
 type Client struct {
-	key  string
-	base string
-	http *httpx.Client
-	err  error
+	key   string
+	base  string
+	http  *httpx.Client
+	fetch *httpx.Client
+	err   error
 }
 
 // NewClient builds a client without network access. Invalid endpoints and a
@@ -70,12 +72,22 @@ func NewClient(config Config) *Client {
 	if agent == "" {
 		agent = "aakb/" + Version
 	}
+	secrets := []string{strings.TrimSpace(config.APIKey)}
 	guarded := httpx.NewClient(httpx.ClientOptions{
 		BaseClient: config.HTTPClient,
 		UserAgent:  agent,
-		Secrets:    []string{strings.TrimSpace(config.APIKey)},
+		Secrets:    secrets,
 	})
-	return &Client{key: strings.TrimSpace(config.APIKey), base: base, http: guarded, err: configErr}
+	// Artifact downloads fetch untrusted third-party URLs, so they run on a
+	// separate client that pins DNS to public addresses. Plain API calls stay
+	// on the default transport.
+	fetch := httpx.NewClient(httpx.ClientOptions{
+		BaseClient: config.HTTPClient,
+		UserAgent:  agent,
+		Secrets:    secrets,
+		PublicOnly: true,
+	})
+	return &Client{key: strings.TrimSpace(config.APIKey), base: base, http: guarded, fetch: fetch, err: configErr}
 }
 
 // Status reports the provider's documented rate-limit usage without assuming
@@ -147,6 +159,10 @@ func (c *Client) get(ctx context.Context, route string, values url.Values, targe
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// Security refusals and invalid requests never succeed on retry.
+			if isTerminalRequestError(err) {
+				return err
+			}
 			if attempt < apiMaxAttempts {
 				if sleepErr := sleepContext(ctx, jitteredBackoff(attempt)); sleepErr != nil {
 					return sleepErr
@@ -157,11 +173,12 @@ func (c *Client) get(ctx context.Context, route string, values url.Values, targe
 		}
 		if resp.StatusCode == http.StatusOK {
 			raw, readErr := httpx.ReadBounded(resp.Body, maxResponseBytes)
-			if closeErr := resp.Body.Close(); closeErr != nil && readErr == nil {
-				readErr = closeErr
-			}
+			closeErr := resp.Body.Close()
 			if readErr != nil {
-				return readErr
+				return readFailure(ctx, readErr)
+			}
+			if closeErr != nil {
+				return readFailure(ctx, closeErr)
 			}
 			if err := json.Unmarshal(raw, target); err != nil {
 				return httpx.WrapError(httpx.CodeUpstream, "invalid_response", "OpenAlex returned invalid JSON", err)
@@ -171,13 +188,10 @@ func (c *Client) get(ctx context.Context, route string, values url.Values, targe
 		snippet, snippetErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 		closeErr := resp.Body.Close()
 		if snippetErr != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return httpx.WrapError(httpx.CodeUpstream, "request_failed", "could not read OpenAlex error response", snippetErr)
+			return readFailure(ctx, snippetErr)
 		}
 		if closeErr != nil {
-			return httpx.WrapError(httpx.CodeUpstream, "request_failed", "could not complete OpenAlex request", closeErr)
+			return readFailure(ctx, closeErr)
 		}
 		retryAfter := resp.Header.Get("Retry-After")
 		failure, retryable := responseError(resp.StatusCode, retryAfter, snippet, c.key)
@@ -244,6 +258,36 @@ func responseError(status int, retryAfterHeader string, body []byte, key string)
 		result.RetryAfter = duration
 	}
 	return result, retryable
+}
+
+// isTerminalRequestError reports transport failures that retry cannot fix:
+// redirect and URL security refusals, and invalid requests.
+func isTerminalRequestError(err error) bool {
+	if errors.Is(err, httpx.ErrRedirectRefused) || errors.Is(err, httpx.ErrUnsafeURL) {
+		return true
+	}
+	var providerErr *httpx.ProviderError
+	if errors.As(err, &providerErr) && providerErr != nil {
+		return providerErr.Code == httpx.CodeInvalidArgument
+	}
+	return false
+}
+
+// readFailure maps a response body failure to a structured error. Stalled
+// bodies report a timeout; other transfer failures report an upstream error.
+// Structured provider errors pass through unchanged so classify keeps them.
+func readFailure(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var providerErr *httpx.ProviderError
+	if errors.As(err, &providerErr) && providerErr != nil {
+		return err
+	}
+	if errors.Is(err, httpx.ErrBodyIdleTimeout) {
+		return httpx.WrapError(httpx.CodeTimeout, "body_idle_timeout", "OpenAlex response stalled", err)
+	}
+	return httpx.WrapError(httpx.CodeUpstream, "read_failed", "could not read OpenAlex response", err)
 }
 
 func containsAny(haystack string, needles ...string) bool {

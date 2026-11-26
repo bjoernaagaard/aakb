@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -103,7 +105,7 @@ func (c *Client) Read(ctx context.Context, st *store.Store, id, continuation str
 		if downloadErr != nil {
 			return nil, downloadErr
 		}
-		paragraphs, digest, err = readArtifact(ctx, artifact.Path)
+		paragraphs, digest, err = readArtifact(ctx, st.DownloadDir(), artifact.Path)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -123,12 +125,7 @@ func (c *Client) Read(ctx context.Context, st *store.Store, id, continuation str
 	if err != nil {
 		return nil, readArgumentError(err.Error())
 	}
-	pageURL := PublicURL(work.LandingURL())
-	page := PublicURL(work.ID)
-	if page == "" {
-		page = pageURL
-	}
-	out := &ReadResult{OpenAlexID: work.ShortID(), Title: work.DisplayName, URL: page,
+	out := &ReadResult{OpenAlexID: work.ShortID(), Title: work.DisplayName, URL: PublicLandingURL(work),
 		Source: source, Text: text, Passages: passages, Digest: digest, Warnings: warnings}
 	if nextContinuation != "" {
 		out.Continuation = nextContinuation
@@ -234,18 +231,36 @@ func isTextBlock(name string) bool {
 	}
 }
 
-func readArtifact(ctx context.Context, artifactPath string) ([]textParagraph, string, error) {
-	file, err := os.Open(artifactPath) //nolint:gosec // G304: artifactPath is a store-managed file under the download directory
+// readArtifact opens a store-managed artifact without following symlinks or
+// blocking on FIFOs: it stats the name inside the download directory root,
+// opens with O_NONBLOCK, and verifies the open file is the same regular file.
+func readArtifact(ctx context.Context, downloadDir, artifactPath string) ([]textParagraph, string, error) {
+	unsupported := func() ([]textParagraph, string, error) {
+		return nil, "", errors.New("structured full text is not a supported regular file")
+	}
+	if !store.ValidFilename(filepath.Base(artifactPath)) {
+		return unsupported()
+	}
+	root, err := os.OpenRoot(downloadDir)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = root.Close() }() //nolint:errcheck // closing read-only download root
+	info, err := root.Lstat(filepath.Base(artifactPath))
+	if err != nil || !info.Mode().IsRegular() {
+		return unsupported()
+	}
+	file, err := root.OpenFile(filepath.Base(artifactPath), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, "", err
 	}
 	defer func() { _ = file.Close() }() //nolint:errcheck // closing read-only structured text file
-	info, err := file.Stat()
-	if err != nil {
-		return nil, "", err
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return unsupported()
 	}
-	if !info.Mode().IsRegular() || info.Size() > maxReadXMLBytes {
-		return nil, "", errors.New("structured full text is not a supported regular file")
+	if opened.Size() > maxReadXMLBytes {
+		return unsupported()
 	}
 	hasher := sha256.New()
 	paragraphs, err := extractTEI(ctx, io.TeeReader(file, hasher))
@@ -341,6 +356,21 @@ func decodeReadCursor(raw string) (readCursor, error) {
 		return cursor, errors.New("invalid reading continuation")
 	}
 	return cursor, nil
+}
+
+// PublicLandingURL returns the first usable landing page for work: the
+// primary landing page, then any location landing page, then the work URL.
+// Addresses with token query parameters or non-HTTPS schemes are skipped.
+func PublicLandingURL(work *Work) string {
+	if u := PublicURL(work.LandingURL()); u != "" {
+		return u
+	}
+	for _, location := range work.Locations {
+		if u := PublicURL(location.LandingPageURL); u != "" {
+			return u
+		}
+	}
+	return PublicURL(work.ID)
 }
 
 // PublicURL retains useful public addresses without exposing token query strings.

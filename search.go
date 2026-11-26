@@ -238,7 +238,12 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
-		return c.finishSearch(ctx, req, out)
+		page, err := c.finishSearch(ctx, req, out)
+		if err != nil {
+			return nil, err
+		}
+		page.Kind = KindOpenAlex
+		return page, nil
 	}
 	out, err := c.papers.Search(ctx, openAlexSearchRequest{
 		Query:            req.Query,
