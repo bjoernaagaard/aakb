@@ -361,10 +361,17 @@ func (c *Client) doGet(ctx context.Context, rawURL string) (*http.Response, erro
 }
 
 func (c *Client) doGetWith(ctx context.Context, rawURL string, extraHeaders http.Header) (*http.Response, error) {
+	return c.doGetWithClient(ctx, rawURL, extraHeaders, c.http)
+}
+
+// doGetWithClient is doGetWith over an explicit guarded client, so callers
+// with their own redirect policy still get the session cookie, session
+// renewal, mirror failure tracking, and credential-safe errors.
+func (c *Client) doGetWithClient(ctx context.Context, rawURL string, extraHeaders http.Header, client *httpx.Client) (*http.Response, error) {
 	for renewed := false; ; renewed = true {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
-			return nil, c.http.Redactor().WrapError(httpx.CodeInvalidArgument, "invalid_url", "invalid upstream URL", err)
+			return nil, client.Redactor().WrapError(httpx.CodeInvalidArgument, "invalid_url", "invalid upstream URL", err)
 		}
 		for key, values := range extraHeaders {
 			req.Header[key] = slices.Clone(values)
@@ -378,7 +385,7 @@ func (c *Client) doGetWith(ctx context.Context, rawURL string, extraHeaders http
 			}
 		}
 
-		resp, err := c.http.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() == nil {
 				c.mirrorFailed(ctx, rawURL, unreachableFailure(err))

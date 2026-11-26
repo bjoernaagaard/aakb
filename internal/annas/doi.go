@@ -609,10 +609,11 @@ func (c *Client) LookupDOI(ctx context.Context, doi string) (*Paper, error) {
 		return nil, err
 	}
 	// The archive failure keeps its own code (UPSTREAM, UPSTREAM_BLOCKED or
-	// REQUEST_TIMEOUT); DOI.org's failure is context only.
+	// REQUEST_TIMEOUT); DOI.org's failure is context only, rendered as plain
+	// text so a structured doi.org error never matches before the archive failure.
 	if failure != nil {
 		if metadataErr != nil {
-			return nil, fmt.Errorf("could not check Anna's Archive for DOI %s (DOI metadata: %w): %w", doi, metadataErr, failure)
+			return nil, fmt.Errorf("could not check Anna's Archive for DOI %s: %w (DOI metadata: %s)", doi, failure, metadataErr.Error())
 		}
 		return nil, fmt.Errorf("could not check Anna's Archive for DOI %s: %w", doi, failure)
 	}

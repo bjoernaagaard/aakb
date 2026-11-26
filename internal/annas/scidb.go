@@ -58,11 +58,7 @@ func (c *Client) fetchSciDBPage(ctx context.Context, rawURL string) (*xhtml.Node
 		}
 		return nil
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, nil, c.http.Redactor().WrapError(httpx.CodeInvalidArgument, "invalid_url", "invalid SciDB URL", err)
-	}
-	resp, err := stopOutside.Do(req)
+	resp, err := c.doGetWithClient(ctx, rawURL, nil, stopOutside)
 	if err != nil {
 		return nil, nil, err
 	}

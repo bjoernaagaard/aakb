@@ -2,6 +2,7 @@ package annas
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -71,18 +72,33 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadDOIRequest) (*Down
 			return result, nil
 		}
 		fastErr = err
+		// A broken local download path fails the SciDB fallback the same way,
+		// so report it directly instead of masking it with a SciDB miss.
+		if isLocalIOError(err) {
+			return nil, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	result, err := c.downloadPaperFromSciDB(ctx, paper, req)
 	if err != nil {
+		// The fast download error is the primary failure: SciDB was only a
+		// fallback, so its miss must not mask quota, credential, or upstream
+		// errors from the fast attempt.
 		if fastErr != nil {
-			c.log.WarnContext(ctx, "fast download failed before SciDB fallback", "error", fastErr)
+			return nil, fastErr
 		}
 		return nil, err
 	}
 	return result, nil
+}
+
+// isLocalIOError reports store failures from the local machine, such as an
+// unwritable download folder, that a SciDB fallback would hit the same way.
+func isLocalIOError(err error) bool {
+	pe, ok := errors.AsType[*httpx.ProviderError](err)
+	return ok && pe != nil && pe.Reason == "local_io"
 }
 
 // resolveSciDBFile maps a DOI to SciDB's PDF URL and archive hash on base.
