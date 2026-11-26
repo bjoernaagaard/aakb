@@ -9,8 +9,8 @@ import (
 )
 
 // This file holds the small golang.org/x/net/html helpers every zero-goquery
-// HTML parser in this package builds on. Where Anna's own scripts use a js-
-// class, the parsers use it too: those change when Anna's scripts do, while
+// HTML parser in this package builds on. Where the archive's own scripts use a js-
+// class, the parsers use it too: those change when the archive's scripts do, while
 // styling classes change with any redesign. Icons and link targets are the
 // next best thing.
 
@@ -66,7 +66,7 @@ func nodeText(node *html.Node) string {
 }
 
 // nodeOwnText joins only a node's direct text children, leaving out nested
-// elements such as the Save button and statistics scripts Anna appends to
+// elements such as the Save button and statistics scripts the archive appends to
 // the metadata line.
 func nodeOwnText(node *html.Node) string {
 	if node == nil {
@@ -173,7 +173,7 @@ func ancestorHasClass(node *html.Node, class string) bool {
 }
 
 // titleLinkNode matches a card's title link: an anchor to its record with
-// the js-vim-focus hook Anna's keyboard navigation uses.
+// the js-vim-focus hook the archive's keyboard navigation uses.
 func titleLinkNode(node *html.Node) bool {
 	return isElement(node, "a") && nodeHasClass(node, "js-vim-focus") && nodeAttr(node, "href") != ""
 }

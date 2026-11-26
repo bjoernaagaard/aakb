@@ -31,7 +31,7 @@ type searchInput struct {
 }
 
 type detailsInput struct {
-	ID             string `json:"id" jsonschema:"MD5 hash, Anna's Archive /md5/ URL, DOI, catalog id such as isbndb:9780521879286, or an OpenAlex work id when OpenAlex is configured"`
+	ID             string `json:"id" jsonschema:"MD5 hash, archive /md5/ URL, DOI, catalog id such as isbndb:9780521879286, or an OpenAlex work id when OpenAlex is configured"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"whole-operation timeout in seconds; 0 uses the default"`
 }
 
@@ -43,7 +43,7 @@ type readInput struct {
 }
 
 type downloadInput struct {
-	Hash           string `json:"hash,omitempty" jsonschema:"MD5 hash or Anna's Archive /md5/ URL; give exactly one of hash, doi or openalex_id"`
+	Hash           string `json:"hash,omitempty" jsonschema:"MD5 hash or archive /md5/ URL; give exactly one of hash, doi or openalex_id"`
 	DOI            string `json:"doi,omitempty" jsonschema:"paper DOI, resolved to a file first"`
 	OpenAlexID     string `json:"openalex_id,omitempty" jsonschema:"OpenAlex work id; downloads through OpenAlex first when configured"`
 	Title          string `json:"title,omitempty" jsonschema:"filename title for a fresh download"`

@@ -17,8 +17,8 @@ import (
 // openalexProvider implements papersProvider on internal/openalex with result
 // mapping to root types. Archive fallback preserves the previous
 // auto-provider behavior: a failed or empty OpenAlex search retries through
-// Anna's Archive journals, and an OpenAlex download without a compatible copy
-// retries a DOI through Anna's Archive.
+// archive journals, and an OpenAlex download without a compatible copy
+// retries a DOI through the archive.
 type openalexProvider struct {
 	client  *openalex.Client
 	files   *store.Store
@@ -83,7 +83,7 @@ func (p *openalexProvider) Search(ctx context.Context, req openAlexSearchRequest
 }
 
 // openAlexOnly reports whether the request carries an OpenAlex-only filter
-// that Anna's Archive cannot serve, so failures must not fall back to it.
+// that the archive cannot serve, so failures must not fall back to it.
 func openAlexOnly(req openAlexSearchRequest) bool {
 	return strings.TrimSpace(req.WorkType) != "" || !req.Filter.empty() ||
 		openalex.IsWorkID(req.Query) || strings.Contains(req.Year, "-") ||
@@ -374,7 +374,7 @@ func openAlexYear(work *openalex.Work) string {
 }
 
 // openAlexDownloadResult maps a stored OpenAlex copy. OpenAlex downloads are
-// content fingerprints, not Anna's Archive checksum matches, so verification
+// content fingerprints, not archive checksum matches, so verification
 // is SHA-256 and no MD5 is reported.
 func openAlexDownloadResult(result openalex.DownloadResult) *DownloadResult {
 	out := &DownloadResult{

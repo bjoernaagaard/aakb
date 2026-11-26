@@ -21,11 +21,11 @@ type Kind string
 const (
 	// KindAuto searches books or resolves a DOI to an article.
 	KindAuto Kind = ""
-	// KindBook searches books in Anna's Archive.
+	// KindBook searches books in the archive.
 	KindBook Kind = "book"
-	// KindArticle searches articles in Anna's Archive.
+	// KindArticle searches articles in the archive.
 	KindArticle Kind = "article"
-	// KindMetadata searches catalog records in Anna's Archive.
+	// KindMetadata searches catalog records in the archive.
 	KindMetadata Kind = "metadata"
 	// KindOpenAlex searches scholarly works through OpenAlex.
 	KindOpenAlex Kind = "openalex"
@@ -213,7 +213,7 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	oaOnly := strings.TrimSpace(req.WorkType) != "" || !req.OpenAlex.empty() ||
 		openalex.IsWorkID(req.Query) || strings.Contains(req.Year, "-") || req.Sort == SortMostCited
 	if aaOnly && oaOnly {
-		return nil, newError(op, CodeInvalidArgument, "OpenAlex-only and Anna-only search filters cannot be combined")
+		return nil, newError(op, CodeInvalidArgument, "OpenAlex-only and archive-only search filters cannot be combined")
 	}
 	if aaOnly {
 		kind := req.Kind
@@ -266,7 +266,7 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	return out, nil
 }
 
-// archiveOnlySort reports sorts that only Anna's Archive supports.
+// archiveOnlySort reports sorts that only the archive supports.
 func archiveOnlySort(sort Sort) bool {
 	switch sort {
 	case SortLargest, SortSmallest, SortNewestAdded, SortOldestAdded, SortRandom:

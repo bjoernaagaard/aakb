@@ -2,7 +2,7 @@ package aakb
 
 import "context"
 
-// Account describes Anna's Archive membership and fast-download allowance.
+// Account describes archive membership and fast-download allowance.
 // A nil SearchAllowed means the provider did not report sufficient information.
 type Account struct {
 	Member         bool     `json:"member"`

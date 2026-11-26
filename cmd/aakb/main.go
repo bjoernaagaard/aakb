@@ -1,4 +1,4 @@
-// Command aakb is an Anna's Archive MCP server and CLI in one binary.
+// Command aakb is a research MCP server and CLI in one binary.
 // With no arguments it serves MCP over stdio. Subcommands: serve (web UI,
 // REST API and MCP over HTTP), search, details, read, download and account.
 // Use only for material you are entitled to obtain.
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -27,6 +28,9 @@ import (
 
 func main() {
 	if err := run(); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		if failure, ok := errors.AsType[*jsonError](err); ok {
 			printJSONError(failure.err)
 		} else {
@@ -53,6 +57,24 @@ func commonFlags(fs *flag.FlagSet) common {
 		timeout:    fs.Int("timeout", 0, "timeout in seconds, at most 600, or 7200 for download"),
 		jsonErrors: fs.Bool("json-errors", false, "print a failure on stderr as one JSON object"),
 	}
+}
+
+func (c common) parse(fs *flag.FlagSet, args []string) error {
+	fs.SetOutput(io.Discard)
+	err := fs.Parse(args)
+	fs.SetOutput(os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		fs.Usage()
+		return err
+	}
+	if err != nil {
+		return c.invalidArgument(fs, err.Error())
+	}
+	return nil
+}
+
+func (c common) invalidArgument(fs *flag.FlagSet, message string) error {
+	return c.report(nil, &aakb.Error{Code: aakb.CodeInvalidArgument, Op: fs.Name(), Message: message})
 }
 
 // report prints out, or returns err in the form the flags asked for.
@@ -82,10 +104,6 @@ func printJSONError(err error) {
 
 func run() error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	cfg, err := config.FromEnv()
-	if err != nil {
-		return err
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -96,7 +114,6 @@ func run() error {
 		args = args[1:]
 	}
 
-	// Help and version never build a client or touch the network.
 	switch cmd {
 	case "help", "-h", "--help":
 		fmt.Print(usage)
@@ -106,17 +123,11 @@ func run() error {
 		return nil
 	case "health":
 		return cliHealth(ctx, args)
-	}
-
-	clientConfig := cfg.Client()
-	clientConfig.Logger = logger
-	client, err := aakb.New(clientConfig)
-	if err != nil {
-		return err
-	}
-
-	switch cmd {
 	case "mcp":
+		client, _, err := loadClient(logger)
+		if err != nil {
+			return err
+		}
 		server := mcpserver.New(client, logger)
 		logger.Info("aakb serving MCP over stdio", "version", mcpserver.Version)
 		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
@@ -124,20 +135,31 @@ func run() error {
 		}
 		return nil
 	case "serve":
-		return serveHTTP(ctx, client, cfg, logger, args)
+		return serveHTTP(ctx, logger, args)
 	case "search":
-		return cliSearch(ctx, client, args)
+		return cliSearch(ctx, logger, args)
 	case "details":
-		return cliDetails(ctx, client, args)
+		return cliDetails(ctx, logger, args)
 	case "download":
-		return cliDownload(ctx, client, args)
+		return cliDownload(ctx, logger, args)
 	case "read":
-		return cliRead(ctx, client, args)
+		return cliRead(ctx, logger, args)
 	case "account":
-		return cliAccount(ctx, client, args)
+		return cliAccount(ctx, logger, args)
 	default:
 		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
 	}
+}
+
+func loadClient(logger *slog.Logger) (*aakb.Client, config.Config, error) {
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return nil, config.Config{}, &aakb.Error{Code: aakb.CodeConfig, Op: "config", Message: err.Error()}
+	}
+	clientConfig := cfg.Client()
+	clientConfig.Logger = logger
+	client, err := aakb.New(clientConfig)
+	return client, cfg, err
 }
 
 func version() string {
@@ -171,11 +193,18 @@ func buildDetail() string {
 	return strings.TrimSpace("commit " + revision + " " + when)
 }
 
-func cliAccount(ctx context.Context, client *aakb.Client, args []string) error {
+func cliAccount(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("account", flag.ContinueOnError)
 	flags := commonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := flags.parse(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return flags.invalidArgument(fs, "unexpected positional arguments")
+	}
+	client, _, err := loadClient(logger)
+	if err != nil {
+		return flags.report(nil, err)
 	}
 	ctx, cancel, err := adapter.WithTimeout(ctx, "account", *flags.timeout)
 	if err != nil {
@@ -186,7 +215,7 @@ func cliAccount(ctx context.Context, client *aakb.Client, args []string) error {
 	return flags.report(out, err)
 }
 
-func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
+func cliSearch(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	kind := fs.String("kind", "", "book, article, metadata or openalex")
 	provider := fs.String("provider", "", "openalex")
@@ -212,8 +241,12 @@ func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 	stats := fs.Bool("stats", false, "include download and quality counts")
 	downloadable := fs.Bool("downloadable-only", false, "only downloadable results")
 	descriptions := fs.Bool("search-descriptions", false, "search descriptions too")
-	if err := fs.Parse(args); err != nil {
+	if err := flags.parse(fs, args); err != nil {
 		return err
+	}
+	client, _, err := loadClient(logger)
+	if err != nil {
+		return flags.report(nil, err)
 	}
 	ctx, cancel, err := adapter.WithTimeout(ctx, "search", *flags.timeout)
 	if err != nil {
@@ -235,14 +268,18 @@ func cliSearch(ctx context.Context, client *aakb.Client, args []string) error {
 	return flags.report(out, err)
 }
 
-func cliDetails(ctx context.Context, client *aakb.Client, args []string) error {
+func cliDetails(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("details", flag.ContinueOnError)
 	flags := commonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := flags.parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: aakb details [-timeout 60] <hash|doi|catalog-id|openalex-id>")
+		return flags.invalidArgument(fs, "expected one hash, DOI, catalog ID or OpenAlex ID")
+	}
+	client, _, err := loadClient(logger)
+	if err != nil {
+		return flags.report(nil, err)
 	}
 	ctx, cancel, err := adapter.WithTimeout(ctx, "details", *flags.timeout)
 	if err != nil {
@@ -253,16 +290,20 @@ func cliDetails(ctx context.Context, client *aakb.Client, args []string) error {
 	return flags.report(out, err)
 }
 
-func cliRead(ctx context.Context, client *aakb.Client, args []string) error {
+func cliRead(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("read", flag.ContinueOnError)
 	continuation := fs.String("continuation", "", "continuation token")
 	limit := fs.Int("limit", 0, "character budget")
 	flags := commonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := flags.parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: aakb read [-continuation t] <openalex-id|doi>")
+		return flags.invalidArgument(fs, "expected one OpenAlex ID or DOI")
+	}
+	client, _, err := loadClient(logger)
+	if err != nil {
+		return flags.report(nil, err)
 	}
 	ctx, cancel, err := adapter.WithTimeout(ctx, "read", *flags.timeout)
 	if err != nil {
@@ -277,7 +318,7 @@ func cliRead(ctx context.Context, client *aakb.Client, args []string) error {
 	return flags.report(adapter.ArticleResponse(req, out), nil)
 }
 
-func cliDownload(ctx context.Context, client *aakb.Client, args []string) error {
+func cliDownload(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("download", flag.ContinueOnError)
 	hash := fs.String("hash", "", "MD5 hash or /md5/ URL")
 	doi := fs.String("doi", "", "paper DOI")
@@ -289,8 +330,15 @@ func cliDownload(ctx context.Context, client *aakb.Client, args []string) error 
 	fileVersion := fs.String("version", "", "published, accepted or submitted, with -openalex-id")
 	quiet := fs.Bool("quiet", false, "print no progress lines on stderr")
 	flags := commonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := flags.parse(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return flags.invalidArgument(fs, "unexpected positional arguments")
+	}
+	client, _, err := loadClient(logger)
+	if err != nil {
+		return flags.report(nil, err)
 	}
 	ctx, cancel, err := adapter.WithTimeout(ctx, "download", *flags.timeout)
 	if err != nil {
@@ -345,7 +393,7 @@ func printJSON(out any, err error) error {
 	return nil
 }
 
-const usage = `aakb — Anna's Archive MCP server and CLI
+const usage = `aakb — Research MCP server and CLI
 
 Usage:
   aakb                  serve MCP over stdio (default)
@@ -359,11 +407,12 @@ Usage:
   aakb health [-addr 127.0.0.1:8080]   exit 0 when a running aakb serve answers /healthz
   aakb version
 
-Every one-shot command takes -timeout <seconds> and -json-errors.
-Run a command with -h to list its flags.
+The search, details, read, download and account commands take -timeout <seconds>
+and -json-errors. Put -json-errors first to get JSON for flag errors too.
+Run a subcommand that takes flags with -h to list them.
 
 Environment:
-  ANNAS_SECRET_KEY      Anna's Archive account secret key (required for search and download)
+  ANNAS_SECRET_KEY      archive account secret key (required for search and download)
   ANNAS_DOWNLOAD_PATH   download folder (default ~/annas-archive)
   ANNAS_BASE_URL        preferred mirror (default https://annas-archive.gl)
   ANNAS_MIRRORS         comma-separated extra mirror hosts for failover (use trusted hosts)

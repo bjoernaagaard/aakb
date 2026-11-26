@@ -48,7 +48,7 @@ func (c Config) LogValue() slog.Value {
 }
 
 // FromEnv builds a Config from ANNAS_* variables, for compatibility with
-// the existing Anna's Archive tools, plus AAKB_CACHE_DIR.
+// the existing archive tools, plus AAKB_CACHE_DIR.
 func FromEnv() (Config, error) {
 	loadDotEnv(".env.local")
 	loadDotEnv(".env")

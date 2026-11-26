@@ -26,7 +26,7 @@ const (
 	maxSignInBodyBytes  = 1 << 20
 	maxSessionFileBytes = 64 << 10
 
-	manualCookieSteps = "in a browser signed in to Anna's Archive, open developer tools -> Application (Chrome, Edge) or Storage (Firefox, Safari) -> Cookies and copy the aa_account_id2 value into AccountCookie"
+	manualCookieSteps = "in a browser signed in to the archive, open developer tools -> Application (Chrome, Edge) or Storage (Firefox, Safari) -> Cookies and copy the aa_account_id2 value into AccountCookie"
 )
 
 type savedSession struct {
@@ -279,7 +279,7 @@ func (c *Client) signInAnyMirror(ctx context.Context) (string, error) {
 		}
 		reasons = append(reasons, err.Error())
 	}
-	safe := "automatic sign-in with SecretKey failed (" + strings.Join(reasons, "; ") + "). If Anna's Archive works in your browser, set the cookie by hand: " + manualCookieSteps
+	safe := "automatic sign-in with SecretKey failed (" + strings.Join(reasons, "; ") + "). If the archive works in your browser, set the cookie by hand: " + manualCookieSteps
 	return "", httpx.NewError(code, "signin_failed", c.http.Redactor().RedactString(safe))
 }
 
@@ -348,7 +348,7 @@ func (c *Client) signInAt(ctx context.Context, origin string) (string, error) {
 	}
 	host := responseHost(resp, accountURL)
 	if readErr == nil && bytes.Contains(body, []byte("Invalid secret key")) {
-		return "", httpx.NewError(httpx.CodeConfig, "invalid_secret_key", fmt.Sprintf("Anna's Archive rejected SecretKey. Copy the secret key from https://%s/account/ into SecretKey", host))
+		return "", httpx.NewError(httpx.CodeConfig, "invalid_secret_key", fmt.Sprintf("The archive rejected SecretKey. Copy the secret key from https://%s/account/ into SecretKey", host))
 	}
 	if resp.StatusCode == http.StatusForbidden && readErr == nil && bytes.Contains(body, []byte("DDoS-Guard")) {
 		return "", httpx.NewError(httpx.CodeUpstreamBlocked, "ddos_guard", host+" put the sign-in form behind a DDoS-Guard browser check")
@@ -429,7 +429,7 @@ func (c *Client) fetchJSONWithHeaders(ctx context.Context, rawURL string, target
 		return httpx.NewError(httpx.CodeNotFound, "not_found", what+" not found")
 	case http.StatusForbidden:
 		httpx.DrainAndClose(resp.Body)
-		return &forbiddenError{message: "Anna's Archive refused " + what + "; it shows them to signed-in members only, so check that your membership is active"}
+		return &forbiddenError{message: "The archive refused " + what + "; it shows them to signed-in members only, so check that your membership is active"}
 	default:
 		httpx.DrainAndClose(resp.Body)
 		return httpResponseError(resp, rawURL)

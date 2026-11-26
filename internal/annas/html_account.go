@@ -13,7 +13,7 @@ import (
 )
 
 // AccountStatus is the signed-in account's membership and fast download
-// allowance. Anna's Archive counts fast downloads over a rolling window of
+// allowance. The archive counts fast downloads over a rolling window of
 // WindowHours, and downloading a file again within it is free.
 // SearchAllowed says whether a membership allows searching, which needs Lucky
 // Librarian or higher; it is nil when the page does not show the tiers.
@@ -201,7 +201,7 @@ func (c *Client) fetchAccountPage(ctx context.Context, base string) (AccountPage
 				continue
 			}
 		}
-		return AccountPage{}, httpx.NewError(httpx.CodeUpstreamBlocked, "signed_out", "Anna's Archive shows this session as signed out; check SecretKey, or set AccountCookie: "+manualCookieSteps)
+		return AccountPage{}, httpx.NewError(httpx.CodeUpstreamBlocked, "signed_out", "The archive shows this session as signed out; check SecretKey, or set AccountCookie: "+manualCookieSteps)
 	}
 }
 
@@ -224,6 +224,6 @@ func (c *Client) explainSearchRefusal(ctx context.Context, err error) error {
 	if allowed := searchAllowed(page.Tiers); allowed == nil || *allowed {
 		return err
 	}
-	return httpx.NewError(httpx.CodeUpstreamBlocked, "search_membership_required", "Anna's Archive refused the search because this account's membership ("+strings.Join(page.Memberships, "; ")+
+	return httpx.NewError(httpx.CodeUpstreamBlocked, "search_membership_required", "The archive refused the search because this account's membership ("+strings.Join(page.Memberships, "; ")+
 		") can download but not search. Searching needs Lucky Librarian or higher, which skips the browser checks that searches otherwise get. Downloads by file hash or /md5/ page URL still work")
 }

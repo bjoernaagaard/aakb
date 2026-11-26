@@ -228,7 +228,7 @@ func cslYear(payload map[string]json.RawMessage) string {
 }
 
 // Identity is a record's own description of its work: the title and authors
-// Anna shows, and the DOI, arXiv id and year in its identifiers. DOIConflict
+// the archive shows, and the DOI, arXiv id and year in its identifiers. DOIConflict
 // marks a record listing several DOIs.
 type Identity struct {
 	DOI         string   `json:"doi"`
@@ -291,11 +291,11 @@ func yearValue(value string) string {
 
 var authorRoleSuffix = regexp.MustCompile(`\s*\((?:author|editor|translator|ed\.|eds\.)\)\s*$`)
 
-// splitAuthors splits Anna's author fields into given-first names.
+// splitAuthors splits the archive's author fields into given-first names.
 func splitAuthors(values []string) []string {
 	var authors []string
 	for _, value := range values {
-		// Anna displays its current full author field as a comma-separated list
+		// The archive displays its current full author field as a comma-separated list
 		// in one data-content node. Older templates expose one linked author per
 		// node. Records from some libraries list "Family, Given (role)" names
 		// separated by semicolons, where the comma belongs to the name.
@@ -352,7 +352,7 @@ func SameWork(doi string, metadata Citation, record Identity) bool {
 		}
 		return true
 	}
-	// Some genuine Anna records do not expose a DOI code. In that case require
+	// Some genuine archive records do not expose a DOI code. In that case require
 	// the CSL title and every author to agree; a title by itself is never enough.
 	return metadata.Title != "" && len(metadata.Authors) > 0 &&
 		NormalizeTitle(metadata.Title) != "" && NormalizeTitle(metadata.Title) == NormalizeTitle(record.Title) &&
@@ -613,9 +613,9 @@ func (c *Client) LookupDOI(ctx context.Context, doi string) (*Paper, error) {
 	// text so a structured doi.org error never matches before the archive failure.
 	if failure != nil {
 		if metadataErr != nil {
-			return nil, fmt.Errorf("could not check Anna's Archive for DOI %s: %w (DOI metadata: %s)", doi, failure, metadataErr.Error())
+			return nil, fmt.Errorf("could not check the archive for DOI %s: %w (DOI metadata: %s)", doi, failure, metadataErr.Error())
 		}
-		return nil, fmt.Errorf("could not check Anna's Archive for DOI %s: %w", doi, failure)
+		return nil, fmt.Errorf("could not check the archive for DOI %s: %w", doi, failure)
 	}
 	return nil, httpx.NewError(httpx.CodeNotFound, "doi_not_found", fmt.Sprintf("no verified archive record found for DOI: %s. The archive may hold another version of the paper, such as the published one under its own DOI: search article_search by the title and download a match by its hash", doi))
 }

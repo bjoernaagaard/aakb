@@ -244,7 +244,7 @@ func sciDBFile(root *xhtml.Node, pageURL string) (downloadURL, hash string, err 
 	return downloadURL, hash, nil
 }
 
-// formatBytes renders a byte count the way Anna's metadata lines show file
+// formatBytes renders a byte count the way the archive's metadata lines show file
 // sizes, such as "3.8MB" or "512KB".
 func formatBytes(size int64) string {
 	const unit = 1024

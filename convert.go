@@ -13,6 +13,10 @@ func classify(ctx context.Context, op string, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
 	}
+	return classifyError(op, err)
+}
+
+func classifyError(op string, err error) error {
 	switch {
 	case err == nil:
 		return nil

@@ -20,7 +20,7 @@ const (
 	defaultDownloadTimeout = 30 * time.Minute
 )
 
-// MirrorMode controls whether Anna's Archive may use alternate mirrors.
+// MirrorMode controls whether the archive may use alternate mirrors.
 type MirrorMode int
 
 const (
@@ -141,7 +141,7 @@ func New(cfg Config) (*Client, error) {
 		HTTPClient:  storeHTTP,
 	})
 	if err != nil {
-		return nil, classify(context.Background(), op, err)
+		return nil, classifyError(op, err)
 	}
 
 	annasClient, err := annas.NewClient(annas.Config{
@@ -159,7 +159,7 @@ func New(cfg Config) (*Client, error) {
 		Store:         files,
 	})
 	if err != nil {
-		return nil, classify(context.Background(), op, err)
+		return nil, classifyError(op, err)
 	}
 
 	c := &Client{

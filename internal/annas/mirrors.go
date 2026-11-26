@@ -41,7 +41,7 @@ const (
 
 var (
 	officialHosts = []string{"annas-archive.gl", "annas-archive.pk", "annas-archive.gd"}
-	errNotUptime  = errors.New("did not answer with Anna's Archive uptime status")
+	errNotUptime  = errors.New("did not answer with archive uptime status")
 	errAllFailed  = errors.New("every mirror failed its check")
 )
 
@@ -109,7 +109,7 @@ func (e *UnavailableError) Error() string {
 		}
 		parts = append(parts, fmt.Sprintf("%s %s %s", m.Host, m.Reason, when))
 	}
-	message := "no Anna's Archive mirror is working"
+	message := "no archive mirror is working"
 	if len(parts) > 0 {
 		message += ": " + strings.Join(parts, ", ")
 	}
@@ -165,7 +165,7 @@ func ParseBaseURL(raw string) (string, error) {
 		return "", httpx.NewError(
 			httpx.CodeConfig,
 			"language_subdomain",
-			fmt.Sprintf("%s is a translated version of %s; use %s, since aakb reads Anna's Archive in English", host, official, official),
+			fmt.Sprintf("%s is a translated version of %s; use %s, since aakb reads the archive in English", host, official, official),
 		)
 	}
 	if port := parsed.Port(); port != "" {
@@ -989,7 +989,7 @@ func checkFailure(err error) MirrorFailure {
 	}
 	if errors.Is(err, errNotUptime) {
 		return MirrorFailure{
-			Reason:  "answered its check with a page that is not Anna's Archive",
+			Reason:  "answered its check with a page that is not the archive",
 			Blocked: true,
 		}
 	}

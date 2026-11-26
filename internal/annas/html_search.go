@@ -14,16 +14,16 @@ import (
 	xhtml "golang.org/x/net/html"
 )
 
-// Anna's search pages list up to 50 results per page and 100 pages.
+// The archive's search pages list up to 50 results per page and 100 pages.
 const (
-	// ResultsPerPage is the number of results one Anna search page holds.
+	// ResultsPerPage is the number of results one archive search page holds.
 	ResultsPerPage = 50
 	// MaxResultPages bounds how many search pages the client will read.
 	MaxResultPages = 100
 )
 
 // Search result cards share one layout for files and catalog records. Each
-// is a child of a results list. opacity-40 marks a file Anna's Archive warns
+// is a child of a results list. opacity-40 marks a file the archive warns
 // might have issues. The list inside .js-partial-matches-show holds looser
 // matches, which can ignore the page's filters.
 type Card struct {
@@ -43,7 +43,7 @@ type Card struct {
 
 // CardMeta is a card's metadata line. Language joins up to three language
 // names, most likely first; Content is a content type such as
-// book_nonfiction; FastDownload marks files on Anna's fast download servers.
+// book_nonfiction; FastDownload marks files on the archive's fast download servers.
 type CardMeta struct {
 	Language     string   `json:"language,omitempty"`
 	Format       string   `json:"format,omitempty"`
@@ -300,14 +300,14 @@ func parseSources(part string) (sources []string, fastDownload, ok bool) {
 	return sources, fastDownload, len(sources) > 0 || fastDownload
 }
 
-// ResultsTotal reads Anna's count, "Results 1-50 (500+ total)". The client
-// reads Anna's pages in English; see ParseBaseURL.
+// ResultsTotal reads the archive's count, "Results 1-50 (500+ total)". The client
+// reads the archive's pages in English; see ParseBaseURL.
 func ResultsTotal(root *xhtml.Node) (total int, lowerBound, found bool) {
 	count := resultsCount(root)
 	return count.total, count.lowerBound, count.found
 }
 
-// resultsLine is Anna's "Results 1-50 (500+ total)": the page shows results
+// resultsLine is the archive's "Results 1-50 (500+ total)": the page shows results
 // from to to, of total.
 type resultsLine struct {
 	from, to, total   int
@@ -345,7 +345,7 @@ func resultsCount(root *xhtml.Node) resultsLine {
 }
 
 // ShowsResults reports whether a page with no parsed cards still shows
-// results, by its count or by links to files. If so, Anna changed its markup,
+// results, by its count or by links to files. If so, the archive changed its markup,
 // and returning no results would read as the work being absent.
 func ShowsResults(root *xhtml.Node, pageNumber int) bool {
 	if root == nil {
@@ -359,7 +359,7 @@ func ShowsResults(root *xhtml.Node, pageNumber int) bool {
 	}) != nil
 }
 
-// FacetValues lists the values Anna offers for a filter on this page.
+// FacetValues lists the values the archive offers for a filter on this page.
 func FacetValues(root *xhtml.Node, name string) []string {
 	var values []string
 	seen := map[string]bool{}
@@ -376,7 +376,7 @@ func FacetValues(root *xhtml.Node, name string) []string {
 	return values
 }
 
-// IsArchivePage reports whether root is one of Anna's Archive's own pages,
+// IsArchivePage reports whether root is one of the archive's pages,
 // rather than a browser check or another site's answer.
 func IsArchivePage(root *xhtml.Node) bool {
 	if root == nil {
@@ -407,14 +407,14 @@ const (
 	ProblemResultCount   = "results that differ from the page's count"
 )
 
-// issuesLine is the line Anna adds to the cards it greys out.
+// issuesLine is the line the archive adds to the cards it greys out.
 const issuesLine = "This file might have issues"
 
 var firstNumberPattern = regexp.MustCompile(`\d+`)
 
 // CheckSearchPage compares what SearchCards read with what the page itself
 // shows: each result link should give a card, the numbers of results and
-// partial matches should be the ones Anna prints, a greyed-out card should
+// partial matches should be the ones the archive prints, a greyed-out card should
 // carry the issues line, and every part of each metadata line should be
 // recognized.
 func CheckSearchPage(root *xhtml.Node, cards []Card) Report {
@@ -469,7 +469,7 @@ func CheckSearchPage(root *xhtml.Node, cards []Card) Report {
 	return report
 }
 
-// Limits on what a Report keeps, so a page Anna changed cannot flood a log
+// Limits on what a Report keeps, so a page the archive changed cannot flood a log
 // with markup or long text.
 const (
 	maxReportSamples     = 3
@@ -550,7 +550,7 @@ func truncateBytes(text string, limit int) string {
 	return cut + "…"
 }
 
-// Some records' text was HTML-escaped before Anna escaped it for its page,
+// Some records' text was HTML-escaped before the archive escaped it for its page,
 // so it reads "Smith &amp; Jones" after the page itself is decoded.
 // Only complete entities are decoded: legacy forms without a semicolon,
 // such as "&para", are ordinary text here.

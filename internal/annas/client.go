@@ -1,11 +1,11 @@
-// Package annas implements a first-party Anna's Archive client built over
+// Package annas implements a first-party archive client built over
 // internal/httpx and internal/store, with TLD-enforced mirror selection,
 // singleflight session renewal, JSON record/stats endpoints, and fast downloads.
 package annas
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // G501: MD5 is required to validate Anna's Archive file hashes
+	"crypto/md5" //nolint:gosec // G501: MD5 is required to validate archive file hashes
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -34,7 +34,7 @@ const (
 
 var diagnosticURLPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
 
-// Config configures an Anna's Archive client. Empty paths are allowed at
+// Config configures an archive client. Empty paths are allowed at
 // construction time; operations that need persistence or downloads check them.
 type Config struct {
 	BaseURL       string
@@ -51,7 +51,7 @@ type Config struct {
 	Store         *store.Store
 }
 
-// Client talks to Anna's Archive mirrors using internal/httpx and internal/store.
+// Client talks to archive mirrors using internal/httpx and internal/store.
 // It is safe for concurrent use.
 type Client struct {
 	secretKey   string

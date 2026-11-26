@@ -2,12 +2,12 @@
 
 # aakb
 
-An Anna's Archive MCP server, CLI, REST API, web UI and Go library in one
+A research MCP server, CLI, REST API, web UI and Go library in one
 static Go binary. It searches books, papers and library catalog records,
 shows the full record for one result, and downloads one verified file. Use
 it only for material you are entitled to obtain.
 
-aakb queries Anna's Archive mirrors and OpenAlex directly. It uses the
+aakb queries archive mirrors and OpenAlex directly. It uses the
 official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) and
 combines, deduplicates and ranks search results.
 
@@ -114,7 +114,7 @@ Tools:
 
 Plus the `find_best_edition` prompt, which walks a client through search,
 compare and download. Search needs a membership tier that allows searching.
-Downloads work with any paid tier. See your Anna's Archive account page.
+Downloads work with any paid tier. See your archive account page.
 
 ## CLI
 
@@ -130,9 +130,9 @@ The same operations without an MCP client, JSON on stdout:
 ```
 
 Every command takes `-timeout <seconds>`, capped at 600 seconds, or 7200 for
-a download. With `-json-errors`, a failure is one JSON object on stderr, such
-as `{"code":"NOT_FOUND","op":"details","message":"..."}`. A download prints
-progress lines on stderr unless you pass `-quiet`. An OpenAlex search takes
+a download. Put `-json-errors` first to get one JSON object for a failure,
+such as `{"code":"NOT_FOUND","op":"details","message":"..."}`. For downloads,
+also pass `-quiet` to keep progress lines off stderr. An OpenAlex search takes
 `-author-id`, `-institution-id`, `-repository-id` and `-relation` with
 `-work-id`. An OpenAlex download takes `-artifact`, `-location-id` and
 `-version`. Run a command with `-h` to list its flags.
@@ -235,7 +235,7 @@ Logs go to stderr, so MCP stdout stays clean.
 
 ```text
 cmd/aakb/              entrypoint: MCP stdio, HTTP server and CLI dispatch
-internal/annas/        Anna's Archive mirror failover, sessions, HTML and JSON client
+internal/annas/        Archive mirror failover, sessions, HTML and JSON client
 internal/openalex/     OpenAlex search, work details, TEI XML reader and downloads
 internal/httpx/        shared HTTPS transport, redirect guard, retries and secret redaction
 internal/store/        unified local download store with indexed reuse and atomic writes

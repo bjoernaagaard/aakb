@@ -22,7 +22,7 @@ type DownloadRequest struct {
 type Verification string
 
 const (
-	// VerificationMD5 means the file matches Anna's Archive's expected digest.
+	// VerificationMD5 means the file matches the archive's expected digest.
 	VerificationMD5 Verification = "md5"
 	// VerificationSHA256 is a locally computed fingerprint for an OpenAlex file.
 	VerificationSHA256 Verification = "sha256"

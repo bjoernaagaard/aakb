@@ -29,10 +29,10 @@ const (
 
 var (
 	domainIndexes     = []int{0, 1, 2, 6, 12, 13, 14}
-	errNoFastDownload = httpx.NewError(httpx.CodeNotFound, "no_fast_download", "Anna's Archive has no fast download for this file; choose another copy from search")
+	errNoFastDownload = httpx.NewError(httpx.CodeNotFound, "no_fast_download", "The archive has no fast download for this file; choose another copy from search")
 )
 
-// DownloadRequest describes a hash-based fast download from Anna's Archive.
+// DownloadRequest describes a hash-based fast download from the archive.
 type DownloadRequest struct {
 	Hash     string
 	Title    string
@@ -172,7 +172,7 @@ func (h *fastServerHealth) orderDomains(pathIndex int, defaults []int) []int {
 	return out
 }
 
-// DownloadHash downloads or reuses a verified file by MD5 hash via Anna's fast
+// DownloadHash downloads or reuses a verified file by MD5 hash via the archive's fast
 // download API and internal/store.
 func (c *Client) DownloadHash(ctx context.Context, req DownloadRequest) (*DownloadResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -180,7 +180,7 @@ func (c *Client) DownloadHash(ctx context.Context, req DownloadRequest) (*Downlo
 	}
 	prefix, hash, err := ParseRecordID(req.Hash)
 	if err != nil || prefix != "md5" {
-		return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_hash", "hash must be a 32-character MD5 or an Anna's Archive /md5/ page URL")
+		return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_hash", "hash must be a 32-character MD5 or an archive /md5/ page URL")
 	}
 	if req.Format != "" {
 		if _, err := store.NormalizeFormat(req.Format); err != nil {
@@ -377,11 +377,11 @@ func classifyFastAPIRejection(resp *http.Response, apiURL, apiError string) erro
 	case http.StatusTooManyRequests:
 		return &stopDownloadError{err: httpx.NewError(httpx.CodeUpstreamBlocked, "fast_downloads_exhausted", "no fast downloads left: this membership's allowance for the rolling window is used up. Files downloaded recently can still be downloaded again; account_status shows the allowance")}
 	case http.StatusUnauthorized:
-		return &stopDownloadError{err: httpx.NewError(httpx.CodeConfig, "invalid_secret_key", "Anna's Archive rejected SecretKey for fast downloads: copy the secret key from your Anna's Archive account page")}
+		return &stopDownloadError{err: httpx.NewError(httpx.CodeConfig, "invalid_secret_key", "The archive rejected SecretKey for fast downloads: copy the secret key from your archive account page")}
 	case http.StatusForbidden:
-		return &stopDownloadError{err: httpx.NewError(httpx.CodeUpstreamBlocked, "membership_required", "fast downloads need an active membership, and Anna's Archive says this account has none")}
+		return &stopDownloadError{err: httpx.NewError(httpx.CodeUpstreamBlocked, "membership_required", "fast downloads need an active membership, and the archive says this account has none")}
 	case http.StatusNotFound:
-		return &stopDownloadError{err: httpx.NewError(httpx.CodeNotFound, "hash_not_found", "Anna's Archive has no file with this hash; choose a hash from search")}
+		return &stopDownloadError{err: httpx.NewError(httpx.CodeNotFound, "hash_not_found", "The archive has no file with this hash; choose a hash from search")}
 	default:
 		return httpx.NewError(httpx.CodeUpstream, "fast_api_rejected", fmt.Sprintf("API rejected request at %s (HTTP status %d): %s", responseHost(resp, apiURL), resp.StatusCode, apiErrorMessage(apiError)))
 	}

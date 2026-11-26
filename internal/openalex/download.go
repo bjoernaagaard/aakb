@@ -253,8 +253,8 @@ func (c *Client) DownloadArtifact(ctx context.Context, st *store.Store, work *Wo
 	}, nil
 }
 
-// ArchiveFallbackDOI reports the DOI the caller may retry through Anna's
-// Archive when the OpenAlex copies are unavailable: provider auto, a plain
+// ArchiveFallbackDOI reports the DOI the caller may retry through the archive
+// when the OpenAlex copies are unavailable: provider auto, a plain
 // PDF request, and a DOI on the options or the resolved work.
 func ArchiveFallbackDOI(work *Work, options DownloadOptions) (string, bool) {
 	if options.LocationID != "" || options.Version != "" || options.Artifact != "pdf" {

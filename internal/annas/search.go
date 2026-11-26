@@ -19,8 +19,8 @@ import (
 // and record pages.
 const maxHTMLBytes = 8 << 20
 
-// SearchOptions narrows one page of Anna's Archive results. Index is an
-// Anna search tab such as "journals" or "meta". The list filters take
+// SearchOptions narrows one page of archive results. Index is an archive
+// search tab such as "journals" or "meta". The list filters take
 // upstream values; a leading "-" excludes a value instead of requiring it.
 // book_any and journal are legacy Content values and are not sent.
 type SearchOptions struct {
@@ -36,7 +36,7 @@ type SearchOptions struct {
 	Descriptions bool
 }
 
-// SearchField limits one metadata field to a phrase. Name is an Anna field
+// SearchField limits one metadata field to a phrase. Name is an archive field
 // such as title, author, publisher or year.
 type SearchField struct {
 	Name  string
@@ -44,7 +44,7 @@ type SearchField struct {
 }
 
 // SearchPage is one page of results. Results honor every filter. Partial
-// holds the looser matches Anna's Archive adds to a short first page; they
+// holds the looser matches the archive adds to a short first page; they
 // may ignore the filters. Total counts all matches, and is only a lower
 // bound when TotalIsLowerBound is set.
 type SearchPage[T any] struct {
@@ -55,7 +55,7 @@ type SearchPage[T any] struct {
 	MorePages         bool
 }
 
-// Book is one file search hit. FastDownload reports whether Anna's fast
+// Book is one file search hit. FastDownload reports whether the archive's fast
 // download servers have the file, which downloads need; PossibleIssues
 // mirrors the archive's warning that the file may be broken or mislabeled.
 type Book struct {
@@ -129,7 +129,7 @@ var contentTypes = map[string]bool{
 	"book_any": true, "journal": true,
 }
 
-// Anna's sort values; relevance is its default, sent as no sort at all.
+// The archive's sort values; relevance is its default, sent as no sort at all.
 var sortValues = map[string]string{
 	"": "", "relevance": "", "newest": "newest", "oldest": "oldest",
 	"largest": "largest", "smallest": "smallest",
@@ -137,7 +137,7 @@ var sortValues = map[string]string{
 }
 
 // ResolveSearch applies legacy content values and the default for a search.
-// book_any is not a current Anna filter and makes later pages empty.
+// book_any is not a current archive filter and makes later pages empty.
 // journal is the old article default and maps to the journals index, as does
 // journal_article outside the metadata index: that tab holds only articles.
 func ResolveSearch(options SearchOptions, defaultContent string) SearchOptions {
@@ -265,7 +265,7 @@ func normalizeFilter(raw []string, name string, valid func(string) bool) ([]stri
 	return values, nil
 }
 
-// canonicalLanguage restores tag casing that Anna's codes use, such as zh-Hant.
+// canonicalLanguage restores tag casing that the archive's codes use, such as zh-Hant.
 func canonicalLanguage(code string) string {
 	prefix := ""
 	if strings.HasPrefix(code, "-") {
@@ -303,7 +303,7 @@ func buildSearchURL(base, query string, options SearchOptions) string {
 	if options.Descriptions {
 		values.Set("desc", "1")
 	}
-	// Anna reads at most nine numbered field terms.
+	// The archive reads at most nine numbered field terms.
 	for i, field := range options.Fields {
 		values.Set("termtype_"+strconv.Itoa(i+1), field.Name)
 		values.Set("termval_"+strconv.Itoa(i+1), field.Value)
@@ -314,7 +314,7 @@ func buildSearchURL(base, query string, options SearchOptions) string {
 	return buildPathURL(base, "/search") + "?" + values.Encode()
 }
 
-// addSearchFilter sends each value as a repeated parameter. Anna excludes a
+// addSearchFilter sends each value as a repeated parameter. The archive excludes a
 // value written as anti__value; callers mark exclusions with a leading "-".
 func addSearchFilter(values url.Values, key string, filters []string) {
 	for _, filter := range filters {
@@ -390,11 +390,11 @@ func (c *Client) searchOn(ctx context.Context, base, query string, options Searc
 	cards := SearchCards(root)
 	c.logUnread("search", max(options.Page, 1), CheckSearchPage(root, cards))
 	if len(cards) == 0 && !IsArchivePage(root) {
-		c.mirrorFailed(ctx, pageURL, MirrorFailure{Reason: "answered a search with a page that is not Anna's Archive", Blocked: true})
+		c.mirrorFailed(ctx, pageURL, MirrorFailure{Reason: "answered a search with a page that is not the archive", Blocked: true})
 		return searchResults{pageURL: pageURL}, httpx.NewError(httpx.CodeUpstreamBlocked, "not_archive_page", "archive returned an unexpected page; check the mirror and account access")
 	}
 	if len(cards) == 0 && ShowsResults(root, options.Page) {
-		return searchResults{pageURL: pageURL}, httpx.NewError(httpx.CodeUpstream, "layout_drift", "Anna's Archive returned search results this version cannot read; its page layout may have changed")
+		return searchResults{pageURL: pageURL}, httpx.NewError(httpx.CodeUpstream, "layout_drift", "The archive returned search results this version cannot read; its page layout may have changed")
 	}
 	if err := checkFacetFilter(root, "src", "source", options.Source); err != nil {
 		return searchResults{pageURL: pageURL}, err
@@ -416,7 +416,7 @@ func (c *Client) fetchHTML(ctx context.Context, rawURL string) (*xhtml.Node, err
 	case http.StatusOK:
 	case http.StatusForbidden:
 		httpx.DrainAndClose(resp.Body)
-		return nil, &forbiddenError{message: "Anna's Archive refused the page; it shows them to signed-in members only, so check that your membership is active"}
+		return nil, &forbiddenError{message: "The archive refused the page; the page is available only to signed-in members, so check that your membership is active"}
 	case http.StatusNotFound:
 		httpx.DrainAndClose(resp.Body)
 		return nil, httpx.NewError(httpx.CodeNotFound, "not_found", "archive record was not found")
@@ -553,7 +553,7 @@ func joinNonEmpty(separator string, values ...string) string {
 	return strings.Join(kept, separator)
 }
 
-// pageTotals fills in totals for a parsed page. Without Anna's count, a
+// pageTotals fills in totals for a parsed page. Without the archive's count, a
 // full page is taken to mean that more results may follow. A page past the
 // last result shows no count either; the total is then unknown, so it is
 // reported as a lower bound of zero, with no more pages.
@@ -574,7 +574,7 @@ func pageTotals[T any](page *SearchPage[T], root *xhtml.Node, pageNumber int) {
 	page.MorePages = pageNumber < MaxResultPages && (total > pageNumber*ResultsPerPage || lowerBound)
 }
 
-// checkFacetFilter rejects requested values the page does not offer. Anna
+// checkFacetFilter rejects requested values the page does not offer. The archive
 // ignores an unknown value and returns no exact matches, which would read
 // as the work being absent. Pages without the facet are not checked.
 func checkFacetFilter(root *xhtml.Node, name, label string, requested []string) error {

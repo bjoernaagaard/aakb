@@ -16,7 +16,7 @@ import (
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 )
 
-// Details holds the normalized metadata for one Anna's Archive file or catalog record.
+// Details holds the normalized metadata for one archive file or catalog record.
 type Details struct {
 	ID                    string              `json:"id"`
 	Hash                  string              `json:"hash,omitempty"`
@@ -196,7 +196,7 @@ func (c *Client) Details(ctx context.Context, id string) (*Details, error) {
 	})
 	if err != nil {
 		if pe, ok := errors.AsType[*httpx.ProviderError](err); ok && pe != nil && pe.Code == httpx.CodeNotFound {
-			return nil, httpx.NewError(httpx.CodeNotFound, "record_not_found", fmt.Sprintf("Anna's Archive has no record %s:%s", prefix, value))
+			return nil, httpx.NewError(httpx.CodeNotFound, "record_not_found", fmt.Sprintf("The archive has no record %s:%s", prefix, value))
 		}
 		return nil, err
 	}

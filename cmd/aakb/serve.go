@@ -12,21 +12,24 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/bjoernaagaard/aakb"
-	"github.com/bjoernaagaard/aakb/internal/config"
 	"github.com/bjoernaagaard/aakb/internal/httpapi"
 	"github.com/bjoernaagaard/aakb/internal/mcpserver"
 	"github.com/bjoernaagaard/aakb/internal/webui"
 )
 
-func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logger *slog.Logger, args []string) error {
+func serveHTTP(ctx context.Context, logger *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "127.0.0.1:8080", "listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	client, cfg, err := loadClient(logger)
+	if err != nil {
+		return err
+	}
+	server := mcpserver.New(client, logger)
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		return mcpserver.New(client, logger)
+		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, Logger: logger})
 
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", *addr)
@@ -65,20 +68,24 @@ func serveHTTP(ctx context.Context, client *aakb.Client, cfg config.Config, logg
 		WriteTimeout:      40 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	done := make(chan struct{})
-	go func() { //nolint:gosec // shutdown waits on the parent ctx, then uses a fresh deadline
+	go func() {
 		defer close(done)
 		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // parent ctx is already cancelled; shutdown needs a fresh deadline
+		if err := srv.Shutdown(shutdownCtx); err != nil {
 			logger.Warn("HTTP shutdown did not finish cleanly", "error", err) //nolint:sloglint // the request context is already cancelled
 		}
 	}()
 	logger.InfoContext(ctx, "aakb serving the web UI, REST and MCP over HTTP", "addr", boundAddr, "auth", cfg.HTTPToken != "")
-	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = srv.Serve(listener)
+	stop()
+	<-done
+	if !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("serve http: %w", err)
 	}
-	<-done
 	return nil
 }

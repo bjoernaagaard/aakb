@@ -3,7 +3,7 @@ package store
 import (
 	"bufio"
 	"context"
-	"crypto/md5" //nolint:gosec // G501: MD5 is required to verify Anna's Archive file checksums
+	"crypto/md5" //nolint:gosec // G501: MD5 is required to verify archive file checksums
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -419,7 +419,7 @@ func (s *Store) Download(ctx context.Context, req TransferRequest) (Result, erro
 
 	xfer := &transferState{
 		dst:      temp,
-		md5Hash:  md5.New(), //nolint:gosec // G401: MD5 is required to verify Anna's Archive file checksums
+		md5Hash:  md5.New(), //nolint:gosec // G401: MD5 is required to verify archive file checksums
 		shaHash:  sha256.New(),
 		expected: resp.ContentLength,
 		maxBytes: maxBytes,
@@ -773,7 +773,7 @@ func copyBounded(ctx context.Context, dst io.Writer, src io.Reader, limit int64,
 }
 
 func hashReader(ctx context.Context, r io.Reader, limit int64) (md5Hex, sha256Hex string, written int64, err error) {
-	md5Hash := md5.New() //nolint:gosec // G401: MD5 is required to verify Anna's Archive file checksums
+	md5Hash := md5.New() //nolint:gosec // G401: MD5 is required to verify archive file checksums
 	shaHash := sha256.New()
 	written, err = copyBounded(ctx, io.MultiWriter(md5Hash, shaHash), r, limit, nil)
 	if err != nil {

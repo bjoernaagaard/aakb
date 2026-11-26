@@ -14,7 +14,7 @@ attacker gains from it.
 
 ## What aakb protects
 
-- The Anna's Archive secret key, the account cookie and the OpenAlex key are
+- The archive secret key, the account cookie and the OpenAlex key are
   read from the environment. They are never tool arguments, and they are
   never written to logs or error messages.
 - `aakb serve` listens on `127.0.0.1` by default. On any other address, the

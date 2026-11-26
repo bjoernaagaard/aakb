@@ -1,6 +1,6 @@
 // Package openalex implements the documented OpenAlex Works API over
 // internal/httpx with artifact downloads through internal/store. It has no
-// dependency on Anna's Archive: archive fallback lives with the caller.
+// dependency on the archive: archive fallback lives with the caller.
 package openalex
 
 import (

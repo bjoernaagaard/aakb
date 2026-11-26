@@ -8,7 +8,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Native Anna's Archive and OpenAlex clients inside `aakb`, replacing the
+- Native archive and OpenAlex clients inside `aakb`, replacing the
   external `annas-mcp` dependency and `goquery`.
 - `ANNAS_MIRRORS` and `aakb.Config.Mirrors` for configuring additional
   failover mirror hosts.
@@ -28,7 +28,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - DOI verification reads `/db/aarecord_elasticsearch/md5:<hash>.json`
   instead of scraping full HTML record pages.
 - OpenAlex requests use retry backoff on transient `429` and `5xx`
-  responses and run independently of Anna's Archive.
+  responses and run independently of the archive.
 
 ### Removed
 

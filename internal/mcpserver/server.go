@@ -20,7 +20,7 @@ var Version = "dev"
 // logger, which must write to stderr so stdio stdout stays clean.
 func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aakb", Version: Version}, &mcp.ServerOptions{
-		Instructions: "Search Anna's Archive for books, papers and catalog records, " +
+		Instructions: "Search for books, papers and catalog records, " +
 			"inspect one record in full, and download a verified file. " +
 			"Start with search, then get_details on a chosen result, then download by its hash or DOI. Use article_read for OpenAlex full text when configured. " +
 			"Use only for material the user is entitled to obtain.",
@@ -29,7 +29,7 @@ func New(client *aakb.Client, logger *slog.Logger) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search",
-		Title:       "Search Anna's Archive",
+		Title:       "Search books, papers and catalog records",
 		Description: "Search books, papers or catalog records with one tool. kind is book, article, metadata or openalex; empty auto-detects a DOI query as an article. Exact results are deduped and optionally ranked; looser suggestions come back separately in partial_matches.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: new(true)},
 		InputSchema: inputSchema[searchInput](map[string]limits{
