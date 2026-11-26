@@ -366,7 +366,7 @@ Environment:
   ANNAS_SECRET_KEY      Anna's Archive account secret key (required for search and download)
   ANNAS_DOWNLOAD_PATH   download folder (default ~/annas-archive)
   ANNAS_BASE_URL        preferred mirror (default https://annas-archive.gl)
-  ANNAS_MIRRORS         optional comma-separated extra mirror hosts for failover
+  ANNAS_MIRRORS         comma-separated extra mirror hosts for failover (use trusted hosts)
   ANNAS_AUTO_BASE_URL   mirror failover, true or false (default true)
   ANNAS_ACCOUNT_COOKIE  optional aa_account_id2 cookie
   OPENALEX_API_KEY      enables article_read and OpenAlex search/download

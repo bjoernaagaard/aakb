@@ -7,9 +7,9 @@ static Go binary. It searches books, papers and library catalog records,
 shows the full record for one result, and downloads one verified file. Use
 it only for material you are entitled to obtain.
 
-Built on the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)
-and the shared [anna Go client](https://github.com/SokolskyNikita/annas-mcp)
-from annas-mcp (MIT), with a unified tool surface, dedupe and ranking on top.
+aakb queries Anna's Archive mirrors and OpenAlex directly. It uses the
+official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) and
+combines, deduplicates and ranks search results.
 
 ## Install
 
@@ -216,7 +216,7 @@ Without a caller deadline, operations have 60 seconds and downloads have
 | `ANNAS_SECRET_KEY` | Account secret key. Required for search and fresh downloads. Never a tool argument, never logged. Falls back to `ANNAS_ARCHIVE_API_KEY`. |
 | `ANNAS_DOWNLOAD_PATH` | Download folder. Default `~/annas-archive`. |
 | `ANNAS_BASE_URL` | Preferred mirror. Default `https://annas-archive.gl`. The host you set receives your credentials, so use only one you trust. |
-| `ANNAS_MIRRORS` | Optional comma-separated extra archive mirror hosts to try during failover. |
+| `ANNAS_MIRRORS` | Optional comma-separated archive mirror hosts to try during failover. These hosts can receive your credentials, so use only hosts you trust. |
 | `ANNAS_AUTO_BASE_URL` | Mirror failover, `true` or `false`. Default `true`. |
 | `ANNAS_ACCOUNT_COOKIE` | Optional `aa_account_id2` cookie, used until it expires. |
 | `AAKB_CACHE_DIR` | Session and mirror health cache. Default `~/.cache/aakb`, mode `0700`. |
