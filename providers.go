@@ -38,12 +38,13 @@ type archiveDownloadRequest struct {
 
 // Compile-time checks that the providers satisfy the seam interfaces.
 var (
-	_ archiveProvider   = (*remoteArchiveProvider)(nil)
-	_ papersProvider    = (*openalexProvider)(nil)
-	_ doiMirrorProvider = (*remoteDOIMirrorProvider)(nil)
+	_ archiveProvider     = (*remoteArchiveProvider)(nil)
+	_ papersProvider      = (*openalexProvider)(nil)
+	_ doiDownloadProvider = (*remoteDOIMirrorProvider)(nil)
+	_ doiDownloadProvider = (*remoteUnpaywallProvider)(nil)
 )
 
-type doiMirrorDownloadRequest struct {
+type doiDownloadRequest struct {
 	DOI      string
 	Title    string
 	Format   string
@@ -92,8 +93,8 @@ type papersProvider interface {
 	Download(ctx context.Context, req openAlexDownloadRequest) (*DownloadResult, error)
 }
 
-type doiMirrorProvider interface {
-	DownloadDOI(ctx context.Context, req doiMirrorDownloadRequest) (*DownloadResult, error)
+type doiDownloadProvider interface {
+	DownloadDOI(ctx context.Context, req doiDownloadRequest) (*DownloadResult, error)
 }
 
 func isDOIQuery(query string) bool {

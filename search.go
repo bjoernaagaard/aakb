@@ -261,9 +261,31 @@ func (c *Client) searchOpenAlex(ctx context.Context, req SearchRequest) (*Search
 	if err := classify(ctx, op, err); err != nil {
 		return nil, err
 	}
+	if req.Rank && req.Sort == SortRelevance {
+		rankOpenAlex(out.Results)
+	}
 	out.Results = dedupe(out.Results)
 	normalizeSearch(req, out)
 	return out, nil
+}
+
+// rankOpenAlex prefers OpenAlex works with a direct PDF download and published
+// non-SSRN DOIs over working-paper stubs when Relevance ranking is enabled.
+func rankOpenAlex(in []Record) {
+	for i, r := range in {
+		score := 0
+		if r.FastDownload {
+			score += 100
+		}
+		doi := strings.ToLower(strings.TrimSpace(r.DOI))
+		if doi != "" && !strings.HasPrefix(doi, "10.2139/ssrn.") {
+			score += 20
+		}
+		in[i].Score = score
+	}
+	slices.SortStableFunc(in, func(a, b Record) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
 }
 
 // archiveOnlySort reports sorts that only the archive supports.

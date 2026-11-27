@@ -100,7 +100,7 @@ func searchValues(options SearchOptions) (url.Values, error) {
 	}
 	types := options.WorkTypes
 	if len(types) == 0 {
-		types = []string{"article", "review", "preprint", "conference-paper"}
+		types = []string{"article", "review", "preprint", "conference-paper", "book", "book-chapter", "editorial", "report"}
 	}
 	supported := map[string]bool{"article": true, "review": true, "preprint": true, "conference-paper": true,
 		"dissertation": true, "book": true, "book-chapter": true, "report": true, "dataset": true,

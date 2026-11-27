@@ -17,7 +17,7 @@ func newDOIMirrorProvider(client *doimirror.Client) *remoteDOIMirrorProvider {
 	return &remoteDOIMirrorProvider{client: client}
 }
 
-func (p *remoteDOIMirrorProvider) DownloadDOI(ctx context.Context, req doiMirrorDownloadRequest) (*DownloadResult, error) {
+func (p *remoteDOIMirrorProvider) DownloadDOI(ctx context.Context, req doiDownloadRequest) (*DownloadResult, error) {
 	res, err := p.client.DownloadDOI(ctx, doimirror.DownloadRequest{
 		DOI:      req.DOI,
 		Title:    req.Title,

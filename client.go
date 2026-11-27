@@ -14,6 +14,7 @@ import (
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 	"github.com/bjoernaagaard/aakb/internal/store"
+	"github.com/bjoernaagaard/aakb/internal/unpaywall"
 )
 
 const (
@@ -50,6 +51,8 @@ func (m MirrorMode) String() string {
 // AllowedTLDs restricts archive mirror hosts to those top-level domains.
 // DOIMirrorBaseURL and DOIMirrors configure optional HTTPS origins for
 // DOI-only PDF downloads, restricted by DOIMirrorAllowedTLDs when set.
+// UnpaywallEmail sets the contact email for Unpaywall open-access PDF lookups;
+// leave empty for the polite default or set to "off" to disable Unpaywall.
 // A nil HTTPClient uses a hardened HTTPS transport. A nil Logger discards logs.
 type Config struct {
 	SecretKey            string `json:"-"`
@@ -61,6 +64,7 @@ type Config struct {
 	DOIMirrors           []string
 	DOIMirrorAllowedTLDs []string
 	DOIMirrorCookie      string `json:"-"`
+	UnpaywallEmail       string
 	Mirror               MirrorMode
 	DownloadDir          string
 	CacheDir             string
@@ -80,6 +84,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("doi_mirrors_count", len(c.DOIMirrors)),
 		slog.Int("doi_mirror_allowed_tlds_count", len(c.DOIMirrorAllowedTLDs)),
 		slog.Bool("doi_mirror_cookie_set", c.DOIMirrorCookie != ""),
+		slog.Bool("unpaywall_email_set", c.UnpaywallEmail != ""),
 		slog.String("mirror", c.Mirror.String()),
 		slog.Bool("secret_key_set", c.SecretKey != ""),
 		slog.Bool("account_cookie_set", c.AccountCookie != ""),
@@ -92,7 +97,8 @@ func (c Config) LogValue() slog.Value {
 type Client struct {
 	archive     archiveProvider
 	papers      papersProvider
-	doiMirror   doiMirrorProvider
+	unpaywall   doiDownloadProvider
+	doiMirror   doiDownloadProvider
 	downloadDir string
 }
 
@@ -192,9 +198,22 @@ func New(cfg Config) (*Client, error) {
 		return nil, classifyError(op, err)
 	}
 
+	unpaywallClient, err := unpaywall.NewClient(unpaywall.Config{
+		Email:      cfg.UnpaywallEmail,
+		HTTPClient: cfg.HTTPClient,
+		UserAgent:  userAgent,
+		Store:      files,
+	})
+	if err != nil {
+		return nil, classifyError(op, err)
+	}
+
 	c := &Client{
 		archive:     newArchiveProvider(archiveClient),
 		downloadDir: cfg.DownloadDir,
+	}
+	if unpaywallClient.Enabled() {
+		c.unpaywall = newUnpaywallProvider(unpaywallClient)
 	}
 	if doiClient.Configured() {
 		c.doiMirror = newDOIMirrorProvider(doiClient)
@@ -204,7 +223,7 @@ func New(cfg Config) (*Client, error) {
 			APIKey:     cfg.OpenAlexKey,
 			HTTPClient: cfg.HTTPClient,
 			UserAgent:  cfg.UserAgent,
-		}), files, c.archive, c.doiMirror)
+		}), files, c.archive, c.unpaywall, c.doiMirror)
 	}
 	return c, nil
 }

@@ -1,6 +1,7 @@
 package aakb
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
@@ -18,16 +20,18 @@ import (
 // mapping to root types. Archive fallback preserves the previous
 // auto-provider behavior: a failed or empty OpenAlex search retries through
 // archive journals, and an OpenAlex download without a compatible copy
-// retries a DOI through the archive.
+// retries verified OpenAlex sibling versions, Unpaywall, the archive, and any
+// configured DOI mirror.
 type openalexProvider struct {
 	client    *openalex.Client
 	files     *store.Store
 	archive   archiveProvider
-	doiMirror doiMirrorProvider
+	unpaywall doiDownloadProvider
+	doiMirror doiDownloadProvider
 }
 
-func newOpenAlexProvider(client *openalex.Client, files *store.Store, archive archiveProvider, doiMirror doiMirrorProvider) *openalexProvider {
-	return &openalexProvider{client: client, files: files, archive: archive, doiMirror: doiMirror}
+func newOpenAlexProvider(client *openalex.Client, files *store.Store, archive archiveProvider, unpaywall, doiMirror doiDownloadProvider) *openalexProvider {
+	return &openalexProvider{client: client, files: files, archive: archive, unpaywall: unpaywall, doiMirror: doiMirror}
 }
 
 func (p *openalexProvider) Search(ctx context.Context, req openAlexSearchRequest) (*SearchResult, error) {
@@ -214,16 +218,215 @@ func (p *openalexProvider) Download(ctx context.Context, req openAlexDownloadReq
 	if len(candidates) == 0 && lastErr == nil {
 		lastErr = httpx.NewError(httpx.CodeNotFound, "no_content", "OpenAlex found the work but no compatible downloadable file is advertised")
 	}
-	if doi, ok := openalex.ArchiveFallbackDOI(work, options); ok {
-		return p.downloadArchive(ctx, req, doi, work.DisplayName)
+	if options.LocationID == "" && options.Version == "" && options.Artifact == "pdf" {
+		siblings := p.findSiblingWorks(ctx, work)
+		if res, sibErr := p.trySiblingDownloads(ctx, work, siblings, options, req.Progress); res != nil || sibErr != nil {
+			return res, sibErr
+		}
+		dois := candidateDOIs(work, options, siblings)
+		var fallbackErr error
+		for _, doi := range dois {
+			res, dlErr := p.downloadDOI(ctx, req, doi, work.DisplayName)
+			if dlErr == nil {
+				return res, nil
+			}
+			if terminalDownloadError(ctx, dlErr) {
+				return nil, dlErr
+			}
+			if fallbackErr == nil {
+				fallbackErr = dlErr
+			}
+		}
+		if fallbackErr != nil {
+			return nil, fallbackErr
+		}
 	}
 	return nil, openalex.UnavailableDownload(lastErr)
 }
 
 func (p *openalexProvider) downloadArchive(ctx context.Context, req openAlexDownloadRequest, doi, expectedTitle string) (*DownloadResult, error) {
-	return downloadDOIWithFallback(ctx, p.archive, p.doiMirror, archiveDownloadRequest{
+	return p.downloadDOI(ctx, req, doi, expectedTitle)
+}
+
+func (p *openalexProvider) downloadDOI(ctx context.Context, req openAlexDownloadRequest, doi, expectedTitle string) (*DownloadResult, error) {
+	return downloadDOIChain(ctx, p.unpaywall, p.archive, p.doiMirror, archiveDownloadRequest{
 		DOI: doi, Title: req.Title, ExpectedTitle: expectedTitle, Format: req.Format, Progress: req.Progress,
 	})
+}
+
+func (p *openalexProvider) findSiblingWorks(ctx context.Context, work *openalex.Work) []openalex.Work {
+	if work == nil || strings.TrimSpace(work.DisplayName) == "" || ctx.Err() != nil {
+		return nil
+	}
+	searchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	page, err := p.client.Search(searchCtx, openalex.SearchOptions{
+		Title:     work.DisplayName,
+		WorkTypes: []string{"any"},
+		PerPage:   8,
+	})
+	if err != nil {
+		return nil
+	}
+	var siblings []openalex.Work
+	for i := range page.Results {
+		cand := &page.Results[i]
+		if cand.ShortID() == work.ShortID() {
+			continue
+		}
+		if isVerifiedSibling(work, cand) {
+			siblings = append(siblings, *cand)
+		}
+	}
+	slices.SortStableFunc(siblings, compareSiblingPriority)
+	if len(siblings) > 3 {
+		siblings = siblings[:3]
+	}
+	return siblings
+}
+
+func (p *openalexProvider) trySiblingDownloads(ctx context.Context, primary *openalex.Work, siblings []openalex.Work, options openalex.DownloadOptions, progress func(done, total int64)) (*DownloadResult, error) {
+	title := options.Title
+	if title == "" {
+		title = primary.DisplayName
+	}
+	for i := range siblings {
+		sib := &siblings[i]
+		sibOpts := openalex.DownloadOptions{
+			OpenAlexID: sib.ShortID(),
+			Title:      title,
+			Format:     options.Format,
+			Artifact:   "pdf",
+		}
+		candidates, err := openalex.DownloadCandidates(sib, sibOpts)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range candidates {
+			res, fileErr := p.client.DownloadArtifact(ctx, p.files, sib, candidate, title, options.Format, progress)
+			if fileErr == nil {
+				return openAlexDownloadResult(res), nil
+			}
+			if terminalDownloadError(ctx, fileErr) {
+				return nil, fileErr
+			}
+		}
+	}
+	return nil, nil
+}
+
+func candidateDOIs(work *openalex.Work, options openalex.DownloadOptions, siblings []openalex.Work) []string {
+	var published, working []string
+	seen := make(map[string]bool)
+	add := func(raw string) {
+		doi := openalex.NormalizeDOI(raw)
+		if doi == "" {
+			return
+		}
+		key := strings.ToLower(doi)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if isSSRNDOI(doi) {
+			working = append(working, doi)
+		} else {
+			published = append(published, doi)
+		}
+	}
+	if doi, ok := openalex.ArchiveFallbackDOI(work, options); ok {
+		add(doi)
+	}
+	for i := range siblings {
+		add(siblings[i].DOI)
+	}
+	out := slices.Concat(published, working)
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
+
+func isVerifiedSibling(primary, cand *openalex.Work) bool {
+	wantTitle := normalizePaperTitle(primary.DisplayName)
+	if wantTitle == "" || wantTitle != normalizePaperTitle(cand.DisplayName) {
+		return false
+	}
+	wantAuthors := workAuthorSurnames(primary)
+	gotAuthors := workAuthorSurnames(cand)
+	if len(wantAuthors) > 0 && len(gotAuthors) > 0 {
+		shared := 0
+		for name := range wantAuthors {
+			if gotAuthors[name] {
+				shared++
+			}
+		}
+		smaller := min(len(wantAuthors), len(gotAuthors))
+		return shared >= 1 && shared*2 >= smaller
+	}
+	if primary.PublicationYear > 0 && cand.PublicationYear > 0 {
+		diff := primary.PublicationYear - cand.PublicationYear
+		if diff < 0 {
+			diff = -diff
+		}
+		return diff <= 5
+	}
+	return false
+}
+
+func compareSiblingPriority(a, b openalex.Work) int {
+	score := func(w *openalex.Work) int {
+		s := 0
+		if openalex.HasDownload(w) {
+			s += 100
+		}
+		doi := openalex.NormalizeDOI(w.DOI)
+		if doi != "" && !isSSRNDOI(doi) {
+			s += 20
+		}
+		return s
+	}
+	if c := cmp.Compare(score(&b), score(&a)); c != 0 {
+		return c
+	}
+	return cmp.Compare(b.CitedByCount, a.CitedByCount)
+}
+
+func isSSRNDOI(doi string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(doi)), "10.2139/ssrn.")
+}
+
+func workAuthorSurnames(work *openalex.Work) map[string]bool {
+	out := make(map[string]bool)
+	for _, a := range work.Authorships {
+		name := normalizePaperTitle(a.Author.DisplayName)
+		fields := strings.Fields(name)
+		if len(fields) == 0 {
+			continue
+		}
+		last := fields[len(fields)-1]
+		if len(last) >= 2 {
+			out[last] = true
+		}
+	}
+	return out
+}
+
+func normalizePaperTitle(title string) string {
+	var out strings.Builder
+	lastSpace := true
+	for _, r := range strings.ToLower(title) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			out.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			out.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.TrimSpace(out.String())
 }
 
 func openAlexIDOrDOI(options openalex.DownloadOptions) string {
@@ -263,7 +466,7 @@ func terminalDownloadError(ctx context.Context, err error) bool {
 func parseWorkTypes(workType, relation string) []string {
 	workTypes := csv(workType)
 	if len(workTypes) == 0 {
-		workTypes = []string{"article", "review", "preprint", "conference-paper"}
+		workTypes = []string{"article", "review", "preprint", "conference-paper", "book", "book-chapter", "editorial", "report"}
 	}
 	if workType == "any" || (workType == "" && relation != "") {
 		workTypes = []string{"any"}
@@ -336,6 +539,7 @@ func openAlexBaseRecord(work *openalex.Work, authors string) Record {
 		Kind: "article", ID: work.ShortID(), Title: work.DisplayName,
 		Authors: authors, Publisher: journal, Year: year,
 		DOI: openalex.NormalizeDOI(work.DOI), URL: openalex.PublicLandingURL(work),
+		FastDownload: openalex.HasDownload(work),
 	}
 }
 

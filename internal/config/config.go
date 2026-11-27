@@ -27,6 +27,7 @@ type Config struct {
 	DOIMirrors           []string
 	DOIMirrorAllowedTLDs []string
 	DOIMirrorCookie      string
+	UnpaywallEmail       string
 	AutoBaseURL          bool
 	DownloadPath         string
 	CacheDir             string
@@ -47,6 +48,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("doi_mirrors_count", len(c.DOIMirrors)),
 		slog.Int("doi_mirror_allowed_tlds_count", len(c.DOIMirrorAllowedTLDs)),
 		slog.Bool("doi_mirror_cookie_set", c.DOIMirrorCookie != ""),
+		slog.Bool("unpaywall_email_set", c.UnpaywallEmail != ""),
 		slog.Bool("auto_base_url", c.AutoBaseURL),
 		slog.String("download_path", c.DownloadPath),
 		slog.String("cache_dir", c.CacheDir),
@@ -114,6 +116,7 @@ func FromEnv() (Config, error) {
 		DOIMirrors:           doiMirrors,
 		DOIMirrorAllowedTLDs: doiAllowedTLDs,
 		DOIMirrorCookie:      os.Getenv("AAKB_DOI_COOKIE"),
+		UnpaywallEmail:       os.Getenv("AAKB_UNPAYWALL_EMAIL"),
 		AutoBaseURL:          auto,
 		DownloadPath:         downloadPath,
 		CacheDir:             cacheDir,
@@ -138,6 +141,7 @@ func (c Config) Client() aakb.Config {
 		DOIMirrors:           c.DOIMirrors,
 		DOIMirrorAllowedTLDs: c.DOIMirrorAllowedTLDs,
 		DOIMirrorCookie:      c.DOIMirrorCookie,
+		UnpaywallEmail:       c.UnpaywallEmail,
 		Mirror:               mirror,
 		DownloadDir:          c.DownloadPath,
 		CacheDir:             c.CacheDir,

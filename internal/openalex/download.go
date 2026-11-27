@@ -125,10 +125,11 @@ func DownloadCandidates(work *Work, options DownloadOptions) ([]DownloadCandidat
 			if options.Version != "" && normalizedVersion(location.Version) != options.Version {
 				return nil, downloadError(httpx.CodeNotFound, "version_mismatch", "the selected location does not establish the requested version")
 			}
-			if !eligibleLocation(location) {
+			pdfURL, ok := eligiblePDFURL(location)
+			if !location.IsOA || !ok {
 				return nil, downloadError(httpx.CodeNotFound, "no_content", "the selected location has no direct open PDF")
 			}
-			return []DownloadCandidate{{URL: locationURL(location), Route: "external_pdf", Location: location.ID, Version: location.Version}}, nil
+			return []DownloadCandidate{{URL: pdfURL, Route: "external_pdf", Location: location.ID, Version: location.Version}}, nil
 		}
 		return nil, downloadError(httpx.CodeInvalidArgument, "unknown_location", "location_id does not belong to the selected work")
 	}
@@ -171,22 +172,36 @@ func DownloadCandidates(work *Work, options DownloadOptions) ([]DownloadCandidat
 	})
 	seen := map[string]bool{}
 	externalCount := 0
-	for _, location := range locations {
-		if externalCount == 2 {
-			break
+	const maxExternalCandidates = 5
+	addLocation := func(location Location, requireOA bool) {
+		if externalCount >= maxExternalCandidates {
+			return
 		}
-		if !eligibleLocation(location) || seen[locationURL(location)] {
-			continue
+		if requireOA && !location.IsOA {
+			return
+		}
+		pdfURL, ok := eligiblePDFURL(location)
+		if !ok || seen[pdfURL] {
+			return
 		}
 		if options.Version != "" && normalizedVersion(location.Version) != options.Version {
-			continue
+			return
 		}
 		if alternateDOI && NormalizeDOI(location.DOI) != options.DOI {
-			continue
+			return
 		}
-		candidates = append(candidates, DownloadCandidate{URL: locationURL(location), Route: "external_pdf", Location: location.ID, Version: location.Version})
-		seen[locationURL(location)] = true
+		candidates = append(candidates, DownloadCandidate{URL: pdfURL, Route: "external_pdf", Location: location.ID, Version: location.Version})
+		seen[pdfURL] = true
 		externalCount++
+	}
+	for _, location := range locations {
+		addLocation(location, true)
+	}
+	// When no location filter is pinned, also try remaining locations that
+	// expose a direct pdf_url (non-OA metadata flags are occasionally stale);
+	// store.ValidationPDF rejects any paywall HTML cleanly.
+	for _, location := range locations {
+		addLocation(location, false)
 	}
 	return candidates, nil
 }
@@ -317,11 +332,33 @@ func HasDownload(work *Work) bool {
 	return slices.ContainsFunc(work.Locations, eligibleLocation)
 }
 
-// eligibleLocation admits only direct open-access PDFs over public HTTPS
-// without credentials.
+// eligibleLocation admits direct open-access PDFs over public HTTPS (upgrading
+// plain http:// PDF links to https://) without credentials.
 func eligibleLocation(location Location) bool {
-	parsed, err := url.Parse(locationURL(location))
-	return location.IsOA && err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" && parsed.User == nil
+	if !location.IsOA {
+		return false
+	}
+	_, ok := eligiblePDFURL(location)
+	return ok
+}
+
+func eligiblePDFURL(location Location) (string, bool) {
+	raw := strings.TrimSpace(locationURL(location))
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	if strings.EqualFold(parsed.Scheme, "http") {
+		parsed.Scheme = "https"
+	}
+	parsed.Fragment = ""
+	if err := httpx.ValidatePublicHTTPSURL(parsed); err != nil {
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 // validateArtifactURL confines hosted artifacts to the official OpenAlex

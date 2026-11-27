@@ -24,9 +24,10 @@ type DownloadDOIRequest struct {
 	Progress      func(done, total int64)
 }
 
-// DownloadDOI downloads an article by DOI, falling back from the fast
-// download servers to SciDB's free PDF, or by hash straight through the fast
-// download servers.
+// DownloadDOI downloads an article by DOI, preferring SciDB's free MD5-verified
+// PDF when an authoritative SciDB page already supplies one and falling back to
+// the fast download servers (or vice versa for search-inferred matches), or by
+// hash straight through the fast download servers.
 func (c *Client) DownloadDOI(ctx context.Context, req DownloadDOIRequest) (*DownloadResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -69,6 +70,25 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadDOIRequest) (*Down
 		paper.Title = req.Title
 	} else if req.ExpectedTitle != "" && (paper.Title == "" || paper.AuthoritativeDOI) {
 		paper.Title = req.ExpectedTitle
+	}
+	// When canonical /scidb/<doi>/ already provided a free PDF link, try it
+	// before spending paid fast-download quota or triggering fast-API 429s.
+	if paper.DownloadURL != "" {
+		result, scidbErr := c.downloadPaperFromSciDB(ctx, paper, req)
+		if scidbErr == nil {
+			return result, nil
+		}
+		if isLocalIOError(scidbErr) || ctx.Err() != nil {
+			return nil, scidbErr
+		}
+		if paper.Hash != "" {
+			fastResult, fastErr := c.DownloadHash(ctx, DownloadRequest{Hash: paper.Hash, Title: paper.Title, Format: req.Format, Progress: req.Progress})
+			if fastErr == nil {
+				return fastResult, nil
+			}
+			return nil, fastErr
+		}
+		return nil, scidbErr
 	}
 	var fastErr error
 	if paper.Hash != "" {

@@ -109,7 +109,7 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 		Progress: req.Progress,
 	}
 	if req.DOI != "" {
-		out, err := downloadDOIWithFallback(ctx, c.archive, c.doiMirror, archiveReq)
+		out, err := downloadDOIChain(ctx, c.unpaywall, c.archive, c.doiMirror, archiveReq)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
@@ -122,10 +122,29 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 	return out, nil
 }
 
-// downloadDOIWithFallback tries the primary archive first, then falls back to
-// the optional DOI mirror on non-terminal archive failures (including when the
-// primary archive is unconfigured).
-func downloadDOIWithFallback(ctx context.Context, archive archiveProvider, mirror doiMirrorProvider, req archiveDownloadRequest) (*DownloadResult, error) {
+// downloadDOIChain tries free open-access PDFs via Unpaywall first (for PDF
+// requests), then the primary archive (free /scidb/ first, then fast
+// download), and finally the optional DOI mirror on non-terminal failures.
+func downloadDOIChain(ctx context.Context, unpaywall doiDownloadProvider, archive archiveProvider, mirror doiDownloadProvider, req archiveDownloadRequest) (*DownloadResult, error) {
+	title := req.Title
+	if title == "" {
+		title = req.ExpectedTitle
+	}
+	format := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(req.Format), "."))
+	if unpaywall != nil && (format == "" || format == "pdf") {
+		out, upwErr := unpaywall.DownloadDOI(ctx, doiDownloadRequest{
+			DOI:      req.DOI,
+			Title:    title,
+			Format:   req.Format,
+			Progress: req.Progress,
+		})
+		if upwErr == nil {
+			return out, nil
+		}
+		if !doiMirrorFallbackAllowed(ctx, upwErr) {
+			return nil, upwErr
+		}
+	}
 	out, archiveErr := archive.DownloadDOI(ctx, req)
 	if archiveErr == nil {
 		return out, nil
@@ -133,11 +152,7 @@ func downloadDOIWithFallback(ctx context.Context, archive archiveProvider, mirro
 	if mirror == nil || !doiMirrorFallbackAllowed(ctx, archiveErr) {
 		return nil, archiveErr
 	}
-	title := req.Title
-	if title == "" {
-		title = req.ExpectedTitle
-	}
-	mirrorOut, mirrorErr := mirror.DownloadDOI(ctx, doiMirrorDownloadRequest{
+	mirrorOut, mirrorErr := mirror.DownloadDOI(ctx, doiDownloadRequest{
 		DOI:      req.DOI,
 		Title:    title,
 		Format:   req.Format,

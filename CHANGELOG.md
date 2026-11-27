@@ -4,6 +4,31 @@ This file lists the changes a user can notice in each release. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-27
+
+### Added
+
+- Opt-in DOI mirror fallback (`AAKB_DOI_BASE_URL`, `AAKB_DOI_MIRRORS`,
+  `AAKB_DOI_ALLOWED_TLDS`, `AAKB_DOI_COOKIE` and matching `aakb.Config`
+  fields) with TLD enforcement, SSRF-safe transfers, challenge detection,
+  backoff failover, and `Capabilities.DOIMirror`.
+- Unpaywall open-access PDF fallback (`AAKB_UNPAYWALL_EMAIL` and
+  `aakb.Config.UnpaywallEmail`, set to `off` to disable).
+- Verified OpenAlex sibling-work lookup during downloads so working-paper
+  records without a PDF can resolve to published or repository copies.
+
+### Changed
+
+- Canonical `/scidb/<doi>/` downloads are trusted without rejecting
+  filename-stub or blank archive titles, and free `/scidb/` PDFs are tried
+  before paid fast-download quota.
+- Default OpenAlex searches include books, book chapters, editorials, and
+  reports, report `fast_download` when a direct PDF is available, and rank
+  downloadable and published-DOI works ahead of working-paper stubs.
+- OpenAlex downloads check up to five external PDF locations, upgrade plain
+  HTTP PDF URLs to HTTPS, and try remaining advertised PDF links when open
+  locations fail.
+
 ## [0.3.0] - 2026-11-26
 
 ### Changed
@@ -89,6 +114,7 @@ search, article reading and downloads behind `OPENALEX_API_KEY`, bearer
 token sign-in, the request limit for each client, and
 `GET /downloads/{name}`.
 
+[0.4.0]: https://github.com/bjoernaagaard/aakb/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bjoernaagaard/aakb/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bjoernaagaard/aakb/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/bjoernaagaard/aakb/compare/v0.1.1...v0.2.0
