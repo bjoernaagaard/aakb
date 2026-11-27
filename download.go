@@ -2,7 +2,11 @@ package aakb
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
+
+	"github.com/bjoernaagaard/aakb/internal/httpx"
 )
 
 // DownloadRequest selects exactly one of Hash, DOI, and OpenAlexID.
@@ -105,7 +109,7 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 		Progress: req.Progress,
 	}
 	if req.DOI != "" {
-		out, err := c.archive.DownloadDOI(ctx, archiveReq)
+		out, err := downloadDOIWithFallback(ctx, c.archive, c.doiMirror, archiveReq)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err
 		}
@@ -116,4 +120,59 @@ func (c *Client) Download(ctx context.Context, req DownloadRequest) (*DownloadRe
 		return nil, err
 	}
 	return out, nil
+}
+
+// downloadDOIWithFallback tries the primary archive first, then falls back to
+// the optional DOI mirror on non-terminal archive failures (including when the
+// primary archive is unconfigured).
+func downloadDOIWithFallback(ctx context.Context, archive archiveProvider, mirror doiMirrorProvider, req archiveDownloadRequest) (*DownloadResult, error) {
+	out, archiveErr := archive.DownloadDOI(ctx, req)
+	if archiveErr == nil {
+		return out, nil
+	}
+	if mirror == nil || !doiMirrorFallbackAllowed(ctx, archiveErr) {
+		return nil, archiveErr
+	}
+	title := req.Title
+	if title == "" {
+		title = req.ExpectedTitle
+	}
+	mirrorOut, mirrorErr := mirror.DownloadDOI(ctx, doiMirrorDownloadRequest{
+		DOI:      req.DOI,
+		Title:    title,
+		Format:   req.Format,
+		Progress: req.Progress,
+	})
+	if mirrorErr == nil {
+		return mirrorOut, nil
+	}
+	return nil, chooseDOIFallbackError(archiveErr, mirrorErr)
+}
+
+func doiMirrorFallbackAllowed(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if pathErr, ok := errors.AsType[*os.PathError](err); ok && pathErr != nil {
+		return false
+	}
+	if pe, ok := errors.AsType[*httpx.ProviderError](err); ok && pe != nil {
+		if pe.Reason == "local_io" || pe.Code == httpx.CodeInvalidArgument {
+			return false
+		}
+	}
+	return true
+}
+
+func chooseDOIFallbackError(archiveErr, mirrorErr error) error {
+	if errors.Is(mirrorErr, context.Canceled) || errors.Is(mirrorErr, context.DeadlineExceeded) {
+		return mirrorErr
+	}
+	if ape, ok := errors.AsType[*httpx.ProviderError](archiveErr); ok && ape != nil && ape.Code == httpx.CodeConfig {
+		return mirrorErr
+	}
+	if mpe, ok := errors.AsType[*httpx.ProviderError](mirrorErr); ok && mpe != nil && mpe.Code == httpx.CodeNotFound {
+		return archiveErr
+	}
+	return mirrorErr
 }

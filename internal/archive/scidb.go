@@ -205,7 +205,7 @@ func (c *Client) paperFromSciDB(ctx context.Context, root *xhtml.Node, doi, scid
 	if err != nil {
 		return nil, err
 	}
-	paper := &Paper{DOI: doi, PageURL: scidbURL, Hash: hash, DownloadURL: downloadURL, Format: "PDF"}
+	paper := &Paper{DOI: doi, PageURL: scidbURL, Hash: hash, DownloadURL: downloadURL, Format: "PDF", AuthoritativeDOI: true}
 	details, err := c.detailsOn(ctx, base, "md5", hash)
 	if err != nil {
 		if ctx.Err() != nil {

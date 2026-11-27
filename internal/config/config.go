@@ -18,16 +18,20 @@ import (
 // Config holds the settings shared by the MCP server and the CLI.
 // The secret key is never logged and never accepted as a tool argument.
 type Config struct {
-	SecretKey     string
-	AccountCookie string
-	BaseURL       string
-	Mirrors       []string
-	AllowedTLDs   []string
-	AutoBaseURL   bool
-	DownloadPath  string
-	CacheDir      string
-	OpenAlexKey   string
-	HTTPToken     string
+	SecretKey            string
+	AccountCookie        string
+	BaseURL              string
+	Mirrors              []string
+	AllowedTLDs          []string
+	DOIMirrorBaseURL     string
+	DOIMirrors           []string
+	DOIMirrorAllowedTLDs []string
+	DOIMirrorCookie      string
+	AutoBaseURL          bool
+	DownloadPath         string
+	CacheDir             string
+	OpenAlexKey          string
+	HTTPToken            string
 	// TrustedProxies holds the proxy networks whose X-Forwarded-For
 	// header aakb serve believes when it counts requests per client.
 	TrustedProxies []netip.Prefix
@@ -39,6 +43,10 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("base_url_set", c.BaseURL != ""),
 		slog.Int("mirrors_count", len(c.Mirrors)),
 		slog.Int("allowed_tlds_count", len(c.AllowedTLDs)),
+		slog.Bool("doi_mirror_base_url_set", c.DOIMirrorBaseURL != ""),
+		slog.Int("doi_mirrors_count", len(c.DOIMirrors)),
+		slog.Int("doi_mirror_allowed_tlds_count", len(c.DOIMirrorAllowedTLDs)),
+		slog.Bool("doi_mirror_cookie_set", c.DOIMirrorCookie != ""),
 		slog.Bool("auto_base_url", c.AutoBaseURL),
 		slog.String("download_path", c.DownloadPath),
 		slog.String("cache_dir", c.CacheDir),
@@ -72,11 +80,22 @@ func FromEnv() (Config, error) {
 	baseURL := os.Getenv("AAKB_ARCHIVE_BASE_URL")
 	mirrors := parseCSV(os.Getenv("AAKB_ARCHIVE_MIRRORS"))
 	allowedTLDs := parseTLDs(os.Getenv("AAKB_ARCHIVE_ALLOWED_TLDS"))
-	if err := checkTLD("AAKB_ARCHIVE_BASE_URL", baseURL, allowedTLDs); err != nil {
+	if err := checkTLD("AAKB_ARCHIVE_BASE_URL", "AAKB_ARCHIVE_ALLOWED_TLDS", baseURL, allowedTLDs); err != nil {
 		return Config{}, err
 	}
 	for _, mirror := range mirrors {
-		if err := checkTLD("AAKB_ARCHIVE_MIRRORS", mirror, allowedTLDs); err != nil {
+		if err := checkTLD("AAKB_ARCHIVE_MIRRORS", "AAKB_ARCHIVE_ALLOWED_TLDS", mirror, allowedTLDs); err != nil {
+			return Config{}, err
+		}
+	}
+	doiBaseURL := os.Getenv("AAKB_DOI_BASE_URL")
+	doiMirrors := parseCSV(os.Getenv("AAKB_DOI_MIRRORS"))
+	doiAllowedTLDs := parseTLDs(os.Getenv("AAKB_DOI_ALLOWED_TLDS"))
+	if err := checkTLD("AAKB_DOI_BASE_URL", "AAKB_DOI_ALLOWED_TLDS", doiBaseURL, doiAllowedTLDs); err != nil {
+		return Config{}, err
+	}
+	for _, mirror := range doiMirrors {
+		if err := checkTLD("AAKB_DOI_MIRRORS", "AAKB_DOI_ALLOWED_TLDS", mirror, doiAllowedTLDs); err != nil {
 			return Config{}, err
 		}
 	}
@@ -85,17 +104,21 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 	return Config{
-		TrustedProxies: proxies,
-		SecretKey:      secretKey,
-		AccountCookie:  os.Getenv("AAKB_ARCHIVE_ACCOUNT_COOKIE"),
-		BaseURL:        baseURL,
-		Mirrors:        mirrors,
-		AllowedTLDs:    allowedTLDs,
-		AutoBaseURL:    auto,
-		DownloadPath:   downloadPath,
-		CacheDir:       cacheDir,
-		OpenAlexKey:    os.Getenv("OPENALEX_API_KEY"),
-		HTTPToken:      os.Getenv("AAKB_HTTP_TOKEN"),
+		TrustedProxies:       proxies,
+		SecretKey:            secretKey,
+		AccountCookie:        os.Getenv("AAKB_ARCHIVE_ACCOUNT_COOKIE"),
+		BaseURL:              baseURL,
+		Mirrors:              mirrors,
+		AllowedTLDs:          allowedTLDs,
+		DOIMirrorBaseURL:     doiBaseURL,
+		DOIMirrors:           doiMirrors,
+		DOIMirrorAllowedTLDs: doiAllowedTLDs,
+		DOIMirrorCookie:      os.Getenv("AAKB_DOI_COOKIE"),
+		AutoBaseURL:          auto,
+		DownloadPath:         downloadPath,
+		CacheDir:             cacheDir,
+		OpenAlexKey:          os.Getenv("OPENALEX_API_KEY"),
+		HTTPToken:            os.Getenv("AAKB_HTTP_TOKEN"),
 	}, nil
 }
 
@@ -106,15 +129,19 @@ func (c Config) Client() aakb.Config {
 		mirror = aakb.MirrorFixed
 	}
 	return aakb.Config{
-		SecretKey:     c.SecretKey,
-		AccountCookie: c.AccountCookie,
-		BaseURL:       c.BaseURL,
-		Mirrors:       c.Mirrors,
-		AllowedTLDs:   c.AllowedTLDs,
-		Mirror:        mirror,
-		DownloadDir:   c.DownloadPath,
-		CacheDir:      c.CacheDir,
-		OpenAlexKey:   c.OpenAlexKey,
+		SecretKey:            c.SecretKey,
+		AccountCookie:        c.AccountCookie,
+		BaseURL:              c.BaseURL,
+		Mirrors:              c.Mirrors,
+		AllowedTLDs:          c.AllowedTLDs,
+		DOIMirrorBaseURL:     c.DOIMirrorBaseURL,
+		DOIMirrors:           c.DOIMirrors,
+		DOIMirrorAllowedTLDs: c.DOIMirrorAllowedTLDs,
+		DOIMirrorCookie:      c.DOIMirrorCookie,
+		Mirror:               mirror,
+		DownloadDir:          c.DownloadPath,
+		CacheDir:             c.CacheDir,
+		OpenAlexKey:          c.OpenAlexKey,
 	}
 }
 
@@ -140,7 +167,7 @@ func parseTLDs(raw string) []string {
 
 // checkTLD rejects a mirror whose top-level domain is missing from a
 // non-empty allowlist such as ["gl", "gd", "pk"].
-func checkTLD(envName, rawHost string, allowed []string) error {
+func checkTLD(envName, allowedEnvName, rawHost string, allowed []string) error {
 	if rawHost == "" || len(allowed) == 0 {
 		return nil
 	}
@@ -152,13 +179,13 @@ func checkTLD(envName, rawHost string, allowed []string) error {
 	}
 	idx := strings.LastIndex(host, ".")
 	if idx < 0 || idx+1 >= len(host) {
-		return fmt.Errorf("%s has a top-level domain outside AAKB_ARCHIVE_ALLOWED_TLDS", envName)
+		return fmt.Errorf("%s has a top-level domain outside %s", envName, allowedEnvName)
 	}
 	tld := strings.ToLower(host[idx+1:])
 	if slices.Contains(allowed, tld) {
 		return nil
 	}
-	return fmt.Errorf("%s has a top-level domain outside AAKB_ARCHIVE_ALLOWED_TLDS", envName)
+	return fmt.Errorf("%s has a top-level domain outside %s", envName, allowedEnvName)
 }
 
 // parsePrefixes reads comma-separated addresses or CIDR networks.

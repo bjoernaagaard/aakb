@@ -83,21 +83,22 @@ type Book struct {
 // internally and never output. Journal is the record's publisher and edition
 // line, which for articles usually names the journal, volume and issue.
 type Paper struct {
-	DOI            string
-	Title          string
-	Authors        string
-	Journal        string
-	Year           string
-	Format         string
-	Size           string
-	Sources        []string
-	FastDownload   bool
-	PossibleIssues bool
-	Hash           string
-	Description    string
-	DownloadURL    string
-	PageURL        string
-	Stats          *RecordStats
+	DOI              string
+	Title            string
+	Authors          string
+	Journal          string
+	Year             string
+	Format           string
+	Size             string
+	Sources          []string
+	FastDownload     bool
+	PossibleIssues   bool
+	AuthoritativeDOI bool
+	Hash             string
+	Description      string
+	DownloadURL      string
+	PageURL          string
+	Stats            *RecordStats
 }
 
 // MetadataRecord is a catalog entry from a source such as Open Library,

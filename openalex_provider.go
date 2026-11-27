@@ -20,13 +20,14 @@ import (
 // archive journals, and an OpenAlex download without a compatible copy
 // retries a DOI through the archive.
 type openalexProvider struct {
-	client  *openalex.Client
-	files   *store.Store
-	archive archiveProvider
+	client    *openalex.Client
+	files     *store.Store
+	archive   archiveProvider
+	doiMirror doiMirrorProvider
 }
 
-func newOpenAlexProvider(client *openalex.Client, files *store.Store, archive archiveProvider) *openalexProvider {
-	return &openalexProvider{client: client, files: files, archive: archive}
+func newOpenAlexProvider(client *openalex.Client, files *store.Store, archive archiveProvider, doiMirror doiMirrorProvider) *openalexProvider {
+	return &openalexProvider{client: client, files: files, archive: archive, doiMirror: doiMirror}
 }
 
 func (p *openalexProvider) Search(ctx context.Context, req openAlexSearchRequest) (*SearchResult, error) {
@@ -220,7 +221,7 @@ func (p *openalexProvider) Download(ctx context.Context, req openAlexDownloadReq
 }
 
 func (p *openalexProvider) downloadArchive(ctx context.Context, req openAlexDownloadRequest, doi, expectedTitle string) (*DownloadResult, error) {
-	return p.archive.DownloadDOI(ctx, archiveDownloadRequest{
+	return downloadDOIWithFallback(ctx, p.archive, p.doiMirror, archiveDownloadRequest{
 		DOI: doi, Title: req.Title, ExpectedTitle: expectedTitle, Format: req.Format, Progress: req.Progress,
 	})
 }

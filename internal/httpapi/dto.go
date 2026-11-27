@@ -5,6 +5,7 @@ import "github.com/bjoernaagaard/aakb"
 type capabilitiesResponse struct {
 	Version      string `json:"version"`
 	OpenAlex     bool   `json:"openalex"`
+	DOIMirror    bool   `json:"doi_mirror"`
 	AuthRequired bool   `json:"auth_required"`
 }
 

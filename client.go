@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/bjoernaagaard/aakb/internal/archive"
+	"github.com/bjoernaagaard/aakb/internal/doimirror"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -46,21 +47,27 @@ func (m MirrorMode) String() string {
 // subdirectory of os.UserCacheDir. Explicit paths must be absolute.
 // BaseURL is the preferred English-language archive origin. Mirrors supplies
 // alternate origins. Without either setting, archive operations are disabled.
-// AllowedTLDs restricts archive mirror hosts to those top-level domains. A nil HTTPClient uses a hardened HTTPS
-// transport. A nil Logger discards logs.
+// AllowedTLDs restricts archive mirror hosts to those top-level domains.
+// DOIMirrorBaseURL and DOIMirrors configure optional HTTPS origins for
+// DOI-only PDF downloads, restricted by DOIMirrorAllowedTLDs when set.
+// A nil HTTPClient uses a hardened HTTPS transport. A nil Logger discards logs.
 type Config struct {
-	SecretKey     string `json:"-"`
-	AccountCookie string `json:"-"`
-	BaseURL       string
-	Mirrors       []string
-	AllowedTLDs   []string
-	Mirror        MirrorMode
-	DownloadDir   string
-	CacheDir      string
-	OpenAlexKey   string       `json:"-"`
-	HTTPClient    *http.Client `json:"-"`
-	UserAgent     string
-	Logger        *slog.Logger `json:"-"`
+	SecretKey            string `json:"-"`
+	AccountCookie        string `json:"-"`
+	BaseURL              string
+	Mirrors              []string
+	AllowedTLDs          []string
+	DOIMirrorBaseURL     string
+	DOIMirrors           []string
+	DOIMirrorAllowedTLDs []string
+	DOIMirrorCookie      string `json:"-"`
+	Mirror               MirrorMode
+	DownloadDir          string
+	CacheDir             string
+	OpenAlexKey          string       `json:"-"`
+	HTTPClient           *http.Client `json:"-"`
+	UserAgent            string
+	Logger               *slog.Logger `json:"-"`
 }
 
 // LogValue reports configuration without credential values or HTTP clients.
@@ -69,6 +76,10 @@ func (c Config) LogValue() slog.Value {
 		slog.Bool("base_url_set", c.BaseURL != ""),
 		slog.Int("mirrors_count", len(c.Mirrors)),
 		slog.Int("allowed_tlds_count", len(c.AllowedTLDs)),
+		slog.Bool("doi_mirror_base_url_set", c.DOIMirrorBaseURL != ""),
+		slog.Int("doi_mirrors_count", len(c.DOIMirrors)),
+		slog.Int("doi_mirror_allowed_tlds_count", len(c.DOIMirrorAllowedTLDs)),
+		slog.Bool("doi_mirror_cookie_set", c.DOIMirrorCookie != ""),
 		slog.String("mirror", c.Mirror.String()),
 		slog.Bool("secret_key_set", c.SecretKey != ""),
 		slog.Bool("account_cookie_set", c.AccountCookie != ""),
@@ -81,12 +92,14 @@ func (c Config) LogValue() slog.Value {
 type Client struct {
 	archive     archiveProvider
 	papers      papersProvider
+	doiMirror   doiMirrorProvider
 	downloadDir string
 }
 
 // Capabilities reports optional features available on a Client.
 type Capabilities struct {
-	OpenAlex bool
+	OpenAlex  bool
+	DOIMirror bool
 }
 
 // New builds a client without network access. It creates the cache directory
@@ -132,7 +145,7 @@ func New(cfg Config) (*Client, error) {
 	storeHTTP := httpx.NewClient(httpx.ClientOptions{
 		BaseClient: cfg.HTTPClient,
 		UserAgent:  userAgent,
-		Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey},
+		Secrets:    []string{cfg.SecretKey, cfg.AccountCookie, cfg.OpenAlexKey, cfg.DOIMirrorCookie},
 		PublicOnly: true,
 	})
 	files, err := store.New(store.Config{
@@ -162,16 +175,36 @@ func New(cfg Config) (*Client, error) {
 		return nil, classifyError(op, err)
 	}
 
+	doiClient, err := doimirror.NewClient(doimirror.Config{
+		BaseURL:     cfg.DOIMirrorBaseURL,
+		Mirrors:     cfg.DOIMirrors,
+		AllowedTLDs: cfg.DOIMirrorAllowedTLDs,
+		AutoBaseURL: cfg.Mirror == MirrorFailover,
+		Cookie:      cfg.DOIMirrorCookie,
+		DownloadDir: cfg.DownloadDir,
+		CacheDir:    cfg.CacheDir,
+		HTTPClient:  cfg.HTTPClient,
+		UserAgent:   cfg.UserAgent,
+		Logger:      cfg.Logger,
+		Store:       files,
+	})
+	if err != nil {
+		return nil, classifyError(op, err)
+	}
+
 	c := &Client{
 		archive:     newArchiveProvider(archiveClient),
 		downloadDir: cfg.DownloadDir,
+	}
+	if doiClient.Configured() {
+		c.doiMirror = newDOIMirrorProvider(doiClient)
 	}
 	if strings.TrimSpace(cfg.OpenAlexKey) != "" {
 		c.papers = newOpenAlexProvider(openalex.NewClient(openalex.Config{
 			APIKey:     cfg.OpenAlexKey,
 			HTTPClient: cfg.HTTPClient,
 			UserAgent:  cfg.UserAgent,
-		}), files, c.archive)
+		}), files, c.archive, c.doiMirror)
 	}
 	return c, nil
 }
@@ -182,7 +215,7 @@ func absolutePath(path string) bool {
 
 // Capabilities reports which optional features are configured.
 func (c *Client) Capabilities() Capabilities {
-	return Capabilities{OpenAlex: c.papers != nil}
+	return Capabilities{OpenAlex: c.papers != nil, DOIMirror: c.doiMirror != nil}
 }
 
 // DownloadDir returns the absolute directory where downloads are saved.

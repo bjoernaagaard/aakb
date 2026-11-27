@@ -420,6 +420,10 @@ Environment:
   AAKB_ARCHIVE_ACCOUNT_COOKIE  optional aa_account_id2 cookie
   OPENALEX_API_KEY      enables article_read and OpenAlex search/download
   AAKB_ARCHIVE_ALLOWED_TLDS    optional comma-separated top-level domains archive mirrors may use
+  AAKB_DOI_BASE_URL            optional HTTPS origin for DOI-only PDF downloads (fallback or standalone)
+  AAKB_DOI_MIRRORS             optional comma-separated extra DOI mirror hosts for failover
+  AAKB_DOI_ALLOWED_TLDS        optional comma-separated top-level domains DOI mirrors may use
+  AAKB_DOI_COOKIE              optional Cookie header sent only to configured DOI mirrors
   AAKB_HTTP_TOKEN       bearer token required by aakb serve when set
   AAKB_TRUSTED_PROXIES  proxy addresses or CIDR networks whose X-Forwarded-For is believed
   AAKB_CACHE_DIR        session and mirror cache (default ~/.cache/aakb)

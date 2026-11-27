@@ -56,7 +56,10 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadDOIRequest) (*Down
 	if err != nil {
 		return nil, err
 	}
-	if req.ExpectedTitle != "" {
+	// Canonical /scidb/<doi>/ pages already establish exact DOI identity, while
+	// their record metadata frequently carries a publisher filename stub or an
+	// empty title. Enforce ExpectedTitle only on search-inferred DOI matches.
+	if req.ExpectedTitle != "" && !paper.AuthoritativeDOI {
 		expected := NormalizeTitle(req.ExpectedTitle)
 		if expected == "" || expected != NormalizeTitle(paper.Title) {
 			return nil, httpx.NewError(httpx.CodeNotFound, "title_mismatch", "archive DOI record does not match the selected paper title")
@@ -64,6 +67,8 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadDOIRequest) (*Down
 	}
 	if req.Title != "" {
 		paper.Title = req.Title
+	} else if req.ExpectedTitle != "" && (paper.Title == "" || paper.AuthoritativeDOI) {
+		paper.Title = req.ExpectedTitle
 	}
 	var fastErr error
 	if paper.Hash != "" {

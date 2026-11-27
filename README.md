@@ -224,6 +224,10 @@ Without a caller deadline, operations have 60 seconds and downloads have
 | `AAKB_CACHE_DIR` | Session and mirror health cache. Default `~/.cache/aakb`, mode `0700`. |
 | `OPENALEX_API_KEY` | Enables `article_read`, OpenAlex search and OpenAlex downloads. |
 | `AAKB_ARCHIVE_ALLOWED_TLDS` | Optional comma-separated top-level domains, such as `gl,gd`. aakb refuses to start when `AAKB_ARCHIVE_BASE_URL` or `AAKB_ARCHIVE_MIRRORS` uses another one. |
+| `AAKB_DOI_BASE_URL` | Optional HTTPS origin for DOI-only PDF downloads, used standalone or after OpenAlex and the primary archive. |
+| `AAKB_DOI_MIRRORS` | Optional comma-separated extra DOI mirror hosts to try during failover. |
+| `AAKB_DOI_ALLOWED_TLDS` | Optional comma-separated top-level domains allowed for `AAKB_DOI_BASE_URL` and `AAKB_DOI_MIRRORS`. |
+| `AAKB_DOI_COOKIE` | Optional `Cookie` header sent only to configured DOI mirror origins. Never logged. |
 | `AAKB_TRUSTED_PROXIES` | Comma-separated proxy addresses or CIDR networks. `aakb serve` reads the client address from `X-Forwarded-For` only on connections from these. |
 | `AAKB_HTTP_TOKEN` | Bearer token that `aakb serve` requires when set. Without it, serve binds to `127.0.0.1` by default. Downloads are then readable at `/downloads/{name}` with the same token. |
 
@@ -238,6 +242,7 @@ Logs go to stderr, so MCP stdout stays clean.
 ```text
 cmd/aakb/              entrypoint: MCP stdio, HTTP server and CLI dispatch
 internal/archive/        Archive mirror failover, sessions, HTML and JSON client
+internal/doimirror/      Optional DOI-only mirror failover and HTML PDF resolver
 internal/openalex/     OpenAlex search, work details, TEI XML reader and downloads
 internal/httpx/        shared HTTPS transport, redirect guard, retries and secret redaction
 internal/store/        unified local download store with indexed reuse and atomic writes

@@ -28,8 +28,9 @@ func (a *API) capabilities(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "Capabilities does not accept query parameters or a body.")
 		return
 	}
+	caps := a.client.Capabilities()
 	writeJSON(w, http.StatusOK, "application/json", capabilitiesResponse{
-		Version: a.version, OpenAlex: a.client.Capabilities().OpenAlex, AuthRequired: len(a.guard.bearer) != 0,
+		Version: a.version, OpenAlex: caps.OpenAlex, DOIMirror: caps.DOIMirror, AuthRequired: len(a.guard.bearer) != 0,
 	})
 }
 
