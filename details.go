@@ -4,6 +4,8 @@ import (
 	"context"
 	"regexp"
 	"strings"
+
+	"github.com/bjoernaagaard/aakb/internal/doi"
 )
 
 // RecordDetails contains the metadata for one file or catalog entry.
@@ -60,7 +62,7 @@ func (c *Client) Details(ctx context.Context, id string) (*RecordDetails, error)
 		details.Description = shortenDescription(details.Description)
 		return details, nil
 	}
-	if strings.HasPrefix(id, "10.") && isDOIQuery(id) {
+	if strings.HasPrefix(id, "10.") && doi.IsQuery(id) {
 		paper, err := c.archive.LookupDOI(ctx, id)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err

@@ -4,15 +4,24 @@ import (
 	"context"
 	"path/filepath"
 
-	"github.com/bjoernaagaard/aakb/internal/doimirror"
+	"github.com/bjoernaagaard/aakb/internal/doi"
 	"github.com/bjoernaagaard/aakb/internal/store"
-	"github.com/bjoernaagaard/aakb/internal/unpaywall"
 )
 
-type doiDownloadFunc func(ctx context.Context, req doiDownloadRequest) (*store.Result, error)
+type doiDownloadClient interface {
+	DownloadDOI(ctx context.Context, req doi.DownloadRequest) (*store.Result, error)
+}
 
-func (f doiDownloadFunc) DownloadDOI(ctx context.Context, req doiDownloadRequest) (*DownloadResult, error) {
-	res, err := f(ctx, req)
+type remoteDOIDownloadProvider struct {
+	client doiDownloadClient
+}
+
+func newDOIDownloadProvider(client doiDownloadClient) doiDownloadProvider {
+	return &remoteDOIDownloadProvider{client: client}
+}
+
+func (p *remoteDOIDownloadProvider) DownloadDOI(ctx context.Context, req doiDownloadRequest) (*DownloadResult, error) {
+	res, err := p.client.DownloadDOI(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -32,26 +41,4 @@ func (f doiDownloadFunc) DownloadDOI(ctx context.Context, req doiDownloadRequest
 		SHA256:       res.SHA256,
 		Reused:       res.Reused,
 	}, nil
-}
-
-func newDOIMirrorProvider(client *doimirror.Client) doiDownloadProvider {
-	return doiDownloadFunc(func(ctx context.Context, req doiDownloadRequest) (*store.Result, error) {
-		return client.DownloadDOI(ctx, doimirror.DownloadRequest{
-			DOI:      req.DOI,
-			Title:    req.Title,
-			Format:   req.Format,
-			Progress: req.Progress,
-		})
-	})
-}
-
-func newUnpaywallProvider(client *unpaywall.Client) doiDownloadProvider {
-	return doiDownloadFunc(func(ctx context.Context, req doiDownloadRequest) (*store.Result, error) {
-		return client.DownloadDOI(ctx, unpaywall.DownloadRequest{
-			DOI:      req.DOI,
-			Title:    req.Title,
-			Format:   req.Format,
-			Progress: req.Progress,
-		})
-	})
 }

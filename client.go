@@ -213,10 +213,10 @@ func New(cfg Config) (*Client, error) {
 		downloadDir: cfg.DownloadDir,
 	}
 	if unpaywallClient.Enabled() {
-		c.unpaywall = newUnpaywallProvider(unpaywallClient)
+		c.unpaywall = newDOIDownloadProvider(unpaywallClient)
 	}
 	if doiClient.Configured() {
-		c.doiMirror = newDOIMirrorProvider(doiClient)
+		c.doiMirror = newDOIDownloadProvider(doiClient)
 	}
 	if strings.TrimSpace(cfg.OpenAlexKey) != "" {
 		c.papers = newOpenAlexProvider(openalex.NewClient(openalex.Config{

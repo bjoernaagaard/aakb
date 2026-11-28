@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/bjoernaagaard/aakb/internal/doi"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/store"
 )
@@ -24,8 +24,6 @@ const (
 	maxCandidateURLs = 4
 )
 
-var validDOIPattern = regexp.MustCompile(`(?i)^10\.\d{4,9}/\S+$`)
-
 // Config configures an Unpaywall client. Empty Email uses a polite default;
 // set Email to "off" or "disabled" to disable Unpaywall lookups.
 type Config struct {
@@ -37,12 +35,7 @@ type Config struct {
 }
 
 // DownloadRequest describes a DOI PDF download via Unpaywall.
-type DownloadRequest struct {
-	DOI      string
-	Title    string
-	Format   string
-	Progress func(done, total int64)
-}
+type DownloadRequest = doi.DownloadRequest
 
 // DownloadResult describes a stored PDF downloaded or reused via Unpaywall.
 type DownloadResult = store.Result
@@ -124,7 +117,7 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 	if c.store == nil {
 		return nil, httpx.NewError(httpx.CodeConfig, "missing_store", "DownloadDir and CacheDir are required for downloads")
 	}
-	doi, ok := parseDOI(req.DOI)
+	normalizedDOI, ok := doi.Parse(req.DOI)
 	if !ok {
 		return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_doi", "doi must be a valid DOI or DOI URL")
 	}
@@ -133,12 +126,12 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 		return nil, err
 	}
 
-	key := "unpaywall:" + strings.ToLower(doi)
+	key := "unpaywall:" + strings.ToLower(normalizedDOI)
 	if reused, found := c.store.LookupKey(ctx, key); found {
 		return &reused, nil
 	}
 
-	record, err := c.lookup(ctx, doi)
+	record, err := c.lookup(ctx, normalizedDOI)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +145,7 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 		title = strings.TrimSpace(record.Title)
 	}
 	if title == "" {
-		title = doi
+		title = normalizedDOI
 	}
 
 	var lastErr error
@@ -281,26 +274,5 @@ func versionRank(version string) int {
 		return 2
 	default:
 		return 3
-	}
-}
-
-func parseDOI(raw string) (string, bool) {
-	doi := strings.TrimSpace(raw)
-	for {
-		lower := strings.ToLower(doi)
-		switch {
-		case strings.HasPrefix(lower, "doi:"):
-			doi = strings.TrimSpace(doi[4:])
-		case strings.HasPrefix(lower, "https://doi.org/"):
-			doi = strings.TrimSpace(doi[len("https://doi.org/"):])
-		case strings.HasPrefix(lower, "http://doi.org/"):
-			doi = strings.TrimSpace(doi[len("http://doi.org/"):])
-		case strings.HasPrefix(lower, "https://dx.doi.org/"):
-			doi = strings.TrimSpace(doi[len("https://dx.doi.org/"):])
-		case strings.HasPrefix(lower, "http://dx.doi.org/"):
-			doi = strings.TrimSpace(doi[len("http://dx.doi.org/"):])
-		default:
-			return doi, validDOIPattern.MatchString(doi)
-		}
 	}
 }

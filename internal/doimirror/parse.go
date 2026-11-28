@@ -51,22 +51,12 @@ func looksLikeMirrorLanding(body []byte) bool {
 	if err != nil {
 		return false
 	}
-	hasForm := false
-	var walk func(*xhtml.Node)
-	walk = func(n *xhtml.Node) {
-		if hasForm || n == nil {
-			return
-		}
+	for n := range root.Descendants() {
 		if n.Type == xhtml.ElementNode && (n.Data == "form" || n.Data == "input") {
-			hasForm = true
-			return
-		}
-		for child := range n.ChildNodes() {
-			walk(child)
+			return true
 		}
 	}
-	walk(root)
-	return hasForm
+	return false
 }
 
 // ParseViewerPage parses one DOI mirror HTML page, detecting anti-bot
@@ -96,11 +86,11 @@ func ParseViewerPage(pageURL string, body []byte) (ViewerPage, error) {
 			switch n.Data {
 			case "title":
 				if titleText == "" {
-					titleText = cleanText(nodeText(n))
+					titleText = cleanNodeText(n)
 				}
 			case "div":
 				if citationText == "" && strings.EqualFold(nodeAttr(n, "id"), "citation") {
-					citationText = cleanText(nodeText(n))
+					citationText = cleanNodeText(n)
 				}
 			case "embed":
 				src := strings.TrimSpace(nodeAttr(n, "src"))
@@ -211,24 +201,15 @@ func hasAttr(node *xhtml.Node, key string) bool {
 	return false
 }
 
-func nodeText(node *xhtml.Node) string {
+func cleanNodeText(node *xhtml.Node) string {
 	if node == nil {
 		return ""
 	}
 	var out strings.Builder
-	var walk func(*xhtml.Node)
-	walk = func(current *xhtml.Node) {
+	for current := range node.Descendants() {
 		if current.Type == xhtml.TextNode {
 			out.WriteString(current.Data)
 		}
-		for child := range current.ChildNodes() {
-			walk(child)
-		}
 	}
-	walk(node)
-	return out.String()
-}
-
-func cleanText(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+	return strings.Join(strings.Fields(out.String()), " ")
 }

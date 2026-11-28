@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/bjoernaagaard/aakb/internal/doi"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 )
 
@@ -30,81 +31,24 @@ const maxDOICandidates = 12
 // doiRecordChecks is how many record identities are verified at once.
 const doiRecordChecks = 4
 
-var validDOIPattern = regexp.MustCompile(`(?i)^10\.\d{4,9}/\S+$`)
-
-// NormalizeDOI removes common DOI URL/label prefixes and enclosing wrappers,
-// as often as they occur, as in "https://doi.org/doi:10.1000/x". Suffix
-// punctuation is significant and must not be guessed away as prose.
-func NormalizeDOI(doi string) string {
-	for {
-		// Each round only shortens the text, so this ends.
-		next := normalizeDOIOnce(doi)
-		if next == doi {
-			return next
-		}
-		doi = next
-	}
-}
-
-func normalizeDOIOnce(doi string) string {
-	doi = unwrapDOI(doi)
-	if strings.HasPrefix(strings.ToLower(doi), "doi:") {
-		doi = unwrapDOI(doi[len("doi:"):])
-	}
-	lower := strings.ToLower(doi)
-	for _, prefix := range []string{"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"} {
-		if strings.HasPrefix(lower, prefix) {
-			if parsed, err := url.Parse(doi); err == nil && parsed.Host != "" {
-				// URL.Path is decoded by net/url, so an escaped slash in a
-				// DOI is treated as the DOI's normal slash separator. Query
-				// parameters and fragments are tracking metadata, not DOI text.
-				doi = strings.TrimPrefix(parsed.Path, "/")
-			} else {
-				doi = doi[len(prefix):]
-			}
-			break
-		}
-	}
-	return strings.TrimSpace(doi)
-}
-
-func unwrapDOI(doi string) string {
-	doi = strings.TrimSpace(doi)
-	for len(doi) >= 2 {
-		first, last := doi[0], doi[len(doi)-1]
-		wrapped := first == '<' && last == '>' || first == '(' && last == ')' ||
-			first == '[' && last == ']' || first == '{' && last == '}' ||
-			first == '"' && last == '"' || first == '\'' && last == '\''
-		if !wrapped {
-			break
-		}
-		doi = strings.TrimSpace(doi[1 : len(doi)-1])
-	}
-	return doi
+// NormalizeDOI removes common DOI URL/label prefixes and enclosing wrappers.
+func NormalizeDOI(value string) string {
+	return doi.Normalize(value)
 }
 
 // IsDOIQuery reports whether a query is explicitly trying to address a DOI.
-// It intentionally returns true for malformed DOI-shaped input so callers can
-// report an invalid DOI instead of silently treating it as keyword search.
 func IsDOIQuery(query string) bool {
-	query = strings.ToLower(unwrapDOI(query))
-	return strings.HasPrefix(query, "10.") ||
-		strings.HasPrefix(query, "doi:") ||
-		strings.HasPrefix(query, "https://doi.org/") ||
-		strings.HasPrefix(query, "http://doi.org/") ||
-		strings.HasPrefix(query, "https://dx.doi.org/") ||
-		strings.HasPrefix(query, "http://dx.doi.org/")
+	return doi.IsQuery(query)
 }
 
 // ParseDOI normalizes and validates a DOI query.
 func ParseDOI(query string) (string, bool) {
-	doi := NormalizeDOI(query)
-	return doi, validDOIPattern.MatchString(doi)
+	return doi.Parse(query)
 }
 
-// ValidDOI reports whether doi has a DOI's shape: 10.<registrant>/<suffix>.
-func ValidDOI(doi string) bool {
-	return validDOIPattern.MatchString(doi)
+// ValidDOI reports whether value has a DOI's shape: 10.<registrant>/<suffix>.
+func ValidDOI(value string) bool {
+	return doi.Valid(value)
 }
 
 // ArxivID is the identifier in an arXiv DOI (10.48550/arXiv.<id>), in

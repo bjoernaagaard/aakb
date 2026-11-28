@@ -7,10 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/bjoernaagaard/aakb/internal/doi"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/mirror"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -21,15 +21,8 @@ const (
 	peekPrefixBytes    = 512
 )
 
-var validDOIPattern = regexp.MustCompile(`(?i)^10\.\d{4,9}/\S+$`)
-
 // DownloadRequest describes a DOI PDF download from a configured DOI mirror.
-type DownloadRequest struct {
-	DOI      string
-	Title    string
-	Format   string
-	Progress func(done, total int64)
-}
+type DownloadRequest = doi.DownloadRequest
 
 // DownloadResult describes a stored PDF downloaded or reused via a DOI mirror.
 type DownloadResult = store.Result
@@ -46,7 +39,7 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 	if c.store == nil {
 		return nil, httpx.NewError(httpx.CodeConfig, "missing_store", "DownloadDir and CacheDir are required for downloads")
 	}
-	doi, ok := parseDOI(req.DOI)
+	normalizedDOI, ok := doi.Parse(req.DOI)
 	if !ok {
 		return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_doi", "doi must be a valid DOI or DOI URL")
 	}
@@ -55,14 +48,14 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 		return nil, err
 	}
 
-	key := "doimirror:" + strings.ToLower(doi)
+	key := "doimirror:" + strings.ToLower(normalizedDOI)
 	if reused, found := c.store.LookupKey(ctx, key); found {
 		return &reused, nil
 	}
 
 	var resolved ViewerPage
 	err = c.onMirror(ctx, func(base string) error {
-		page, resolveErr := c.resolveOn(ctx, base, doi)
+		page, resolveErr := c.resolveOn(ctx, base, normalizedDOI)
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -78,7 +71,7 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 		title = resolved.Title
 	}
 	if title == "" {
-		title = doi
+		title = normalizedDOI
 	}
 
 	transfer, err := c.store.Download(ctx, store.TransferRequest{
@@ -179,61 +172,12 @@ func (c *Client) doGet(ctx context.Context, rawURL string, extraHeaders http.Hea
 	return resp, nil
 }
 
-func buildDOIURL(base, doi string) string {
+func buildDOIURL(base, doiValue string) string {
 	u, err := url.Parse(strings.TrimSuffix(strings.TrimSpace(base), "/"))
 	if err != nil || u.Host == "" {
-		return strings.TrimSuffix(base, "/") + "/" + doi
+		return strings.TrimSuffix(base, "/") + "/" + doiValue
 	}
-	u.Path = "/" + doi
+	u.Path = "/" + doiValue
 	u.RawPath, u.RawQuery, u.Fragment = "", "", ""
 	return u.String()
-}
-
-func parseDOI(raw string) (string, bool) {
-	doi := normalizeDOI(raw)
-	return doi, validDOIPattern.MatchString(doi)
-}
-
-func normalizeDOI(doi string) string {
-	for {
-		next := normalizeDOIOnce(doi)
-		if next == doi {
-			return next
-		}
-		doi = next
-	}
-}
-
-func normalizeDOIOnce(doi string) string {
-	doi = unwrapDOI(doi)
-	if strings.HasPrefix(strings.ToLower(doi), "doi:") {
-		doi = unwrapDOI(doi[len("doi:"):])
-	}
-	lower := strings.ToLower(doi)
-	for _, prefix := range []string{"https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "http://dx.doi.org/"} {
-		if strings.HasPrefix(lower, prefix) {
-			if parsed, err := url.Parse(doi); err == nil && parsed.Host != "" {
-				doi = strings.TrimPrefix(parsed.Path, "/")
-			} else {
-				doi = doi[len(prefix):]
-			}
-			break
-		}
-	}
-	return strings.TrimSpace(doi)
-}
-
-func unwrapDOI(doi string) string {
-	doi = strings.TrimSpace(doi)
-	for len(doi) >= 2 {
-		first, last := doi[0], doi[len(doi)-1]
-		wrapped := first == '<' && last == '>' || first == '(' && last == ')' ||
-			first == '[' && last == ']' || first == '{' && last == '}' ||
-			first == '"' && last == '"' || first == '\'' && last == '\''
-		if !wrapped {
-			break
-		}
-		doi = strings.TrimSpace(doi[1 : len(doi)-1])
-	}
-	return doi
 }

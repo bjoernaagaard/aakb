@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bjoernaagaard/aakb/internal/doi"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 )
 
@@ -157,7 +158,7 @@ func (c *Client) Search(ctx context.Context, req SearchRequest) (*SearchResult, 
 	if !req.OpenAlex.empty() {
 		return nil, newError(op, CodeInvalidArgument, "author_id, institution_id, repository_id, relation and work_id need kind openalex")
 	}
-	if (req.Kind == KindAuto || req.Kind == KindArticle) && isDOIQuery(req.Query) {
+	if (req.Kind == KindAuto || req.Kind == KindArticle) && doi.IsQuery(req.Query) {
 		rec, err := c.archive.LookupDOI(ctx, req.Query)
 		if err := classify(ctx, op, err); err != nil {
 			return nil, err

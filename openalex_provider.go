@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
+	"github.com/bjoernaagaard/aakb/internal/archive"
 	"github.com/bjoernaagaard/aakb/internal/httpx"
 	"github.com/bjoernaagaard/aakb/internal/openalex"
 	"github.com/bjoernaagaard/aakb/internal/store"
@@ -347,8 +347,8 @@ func candidateDOIs(work *openalex.Work, options openalex.DownloadOptions, siblin
 }
 
 func isVerifiedSibling(primary, cand *openalex.Work) bool {
-	wantTitle := normalizePaperTitle(primary.DisplayName)
-	if wantTitle == "" || wantTitle != normalizePaperTitle(cand.DisplayName) {
+	wantTitle := archive.NormalizeTitle(primary.DisplayName)
+	if wantTitle == "" || wantTitle != archive.NormalizeTitle(cand.DisplayName) {
 		return false
 	}
 	wantAuthors := workAuthorSurnames(primary)
@@ -398,7 +398,7 @@ func isSSRNDOI(doi string) bool {
 func workAuthorSurnames(work *openalex.Work) map[string]bool {
 	out := make(map[string]bool)
 	for _, a := range work.Authorships {
-		name := normalizePaperTitle(a.Author.DisplayName)
+		name := archive.NormalizeTitle(a.Author.DisplayName)
 		fields := strings.Fields(name)
 		if len(fields) == 0 {
 			continue
@@ -409,23 +409,6 @@ func workAuthorSurnames(work *openalex.Work) map[string]bool {
 		}
 	}
 	return out
-}
-
-func normalizePaperTitle(title string) string {
-	var out strings.Builder
-	lastSpace := true
-	for _, r := range strings.ToLower(title) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			out.WriteRune(r)
-			lastSpace = false
-			continue
-		}
-		if !lastSpace {
-			out.WriteByte(' ')
-			lastSpace = true
-		}
-	}
-	return strings.TrimSpace(out.String())
 }
 
 func openAlexIDOrDOI(options openalex.DownloadOptions) string {

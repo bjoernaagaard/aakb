@@ -2,7 +2,8 @@ package aakb
 
 import (
 	"context"
-	"strings"
+
+	"github.com/bjoernaagaard/aakb/internal/doi"
 )
 
 // UpstreamStatus reports the current reachability of the configured archive mirror.
@@ -40,15 +41,10 @@ type archiveDownloadRequest struct {
 var (
 	_ archiveProvider     = (*remoteArchiveProvider)(nil)
 	_ papersProvider      = (*openalexProvider)(nil)
-	_ doiDownloadProvider = doiDownloadFunc(nil)
+	_ doiDownloadProvider = (*remoteDOIDownloadProvider)(nil)
 )
 
-type doiDownloadRequest struct {
-	DOI      string
-	Title    string
-	Format   string
-	Progress func(done, total int64)
-}
+type doiDownloadRequest = doi.DownloadRequest
 
 type openAlexSearchRequest struct {
 	Query            string
@@ -94,28 +90,4 @@ type papersProvider interface {
 
 type doiDownloadProvider interface {
 	DownloadDOI(ctx context.Context, req doiDownloadRequest) (*DownloadResult, error)
-}
-
-func isDOIQuery(query string) bool {
-	query = strings.ToLower(unwrapDOI(query))
-	return strings.HasPrefix(query, "10.") ||
-		strings.HasPrefix(query, "doi:") ||
-		strings.HasPrefix(query, "https://doi.org/") ||
-		strings.HasPrefix(query, "http://doi.org/") ||
-		strings.HasPrefix(query, "https://dx.doi.org/") ||
-		strings.HasPrefix(query, "http://dx.doi.org/")
-}
-
-func unwrapDOI(doi string) string {
-	doi = strings.TrimSpace(doi)
-	for len(doi) >= 2 {
-		first, last := doi[0], doi[len(doi)-1]
-		if (first != '<' || last != '>') && (first != '(' || last != ')') &&
-			(first != '[' || last != ']') && (first != '{' || last != '}') &&
-			(first != '"' || last != '"') && (first != '\'' || last != '\'') {
-			break
-		}
-		doi = strings.TrimSpace(doi[1 : len(doi)-1])
-	}
-	return doi
 }

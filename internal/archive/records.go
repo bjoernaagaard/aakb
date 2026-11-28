@@ -156,7 +156,6 @@ const (
 )
 
 var (
-	recordPrefixPattern   = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	detailIdentifiers     = []string{"isbn13", "isbn10", "doi", "issn", "iso", "oclc", "lccn", "ol", "goodreads", "gbooks", "librarything", "ocaid", "asin", "pmid", "arxiv"}
 	detailClassifications = []string{"ddc", "lcc", "udc"}
 	detailSubjectKeys     = []string{"openlib_subject", "edsebk_subject", "rgb_subject", "zlib_category_name"}
@@ -244,7 +243,7 @@ func ParseRecordID(input string) (prefix, value string, err error) {
 	}
 	if strings.HasPrefix(input, "/") || strings.Contains(input, "://") {
 		if parsed, parseErr := url.Parse(input); parseErr == nil {
-			if p, v, ok := recordPath(parsed.Path); ok {
+			if p, v, ok := RecordPath(parsed.Path); ok {
 				if unescaped, unescapeErr := url.PathUnescape(v); unescapeErr == nil {
 					v = unescaped
 				}
@@ -257,7 +256,7 @@ func ParseRecordID(input string) (prefix, value string, err error) {
 	}
 	prefix, value, found := strings.Cut(input, ":")
 	prefix = strings.ToLower(prefix)
-	if !found || !recordPrefixPattern.MatchString(prefix) || value == "" || len(value) > 300 || strings.ContainsAny(value, " \t\r\n?#") {
+	if !found || !recordPathPattern.MatchString(prefix) || value == "" || len(value) > 300 || strings.ContainsAny(value, " \t\r\n?#") {
 		return "", "", httpx.NewError(httpx.CodeInvalidArgument, "invalid_id", "id must be a 32-character hash from search or a record id such as isbndb:9780521879286")
 	}
 	if prefix == "md5" {
@@ -268,19 +267,6 @@ func ParseRecordID(input string) (prefix, value string, err error) {
 		return prefix, hash, nil
 	}
 	return prefix, value, nil
-}
-
-func recordPath(href string) (prefix, id string, ok bool) {
-	parsed, err := url.Parse(href)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
-		return "", "", false
-	}
-	prefix, id, found := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
-	id = strings.TrimSuffix(id, "/")
-	if !found || id == "" || !recordPrefixPattern.MatchString(prefix) {
-		return "", "", false
-	}
-	return prefix, id, true
 }
 
 func escapeRecordValue(value string) string {
@@ -328,22 +314,8 @@ func detailsFromRecord(record *recordPayload, base, prefix, value string) *Detai
 	if size, err := strconv.ParseInt(string(file.FilesizeBest), 10, 64); err == nil && size > 0 {
 		details.SizeBytes = size
 	}
-	for _, identifier := range detailIdentifiers {
-		if values := distinctValues(file.IdentifiersUnified[identifier], maxDetailIdentifiers, ""); len(values) > 0 {
-			if details.Identifiers == nil {
-				details.Identifiers = make(map[string][]string)
-			}
-			details.Identifiers[identifier] = values
-		}
-	}
-	for _, key := range detailClassifications {
-		if values := distinctValues(file.ClassificationsUnified[key], maxDetailIdentifiers, ""); len(values) > 0 {
-			if details.Classifications == nil {
-				details.Classifications = make(map[string][]string)
-			}
-			details.Classifications[key] = values
-		}
-	}
+	details.Identifiers = collectUnifiedValues(file.IdentifiersUnified, detailIdentifiers, maxDetailIdentifiers)
+	details.Classifications = collectUnifiedValues(file.ClassificationsUnified, detailClassifications, maxDetailIdentifiers)
 	var subjects LooseStrings
 	for _, key := range detailSubjectKeys {
 		for _, subject := range file.ClassificationsUnified[key] {
@@ -369,6 +341,19 @@ func detailsFromRecord(record *recordPayload, base, prefix, value string) *Detai
 		})
 	}
 	return details
+}
+
+func collectUnifiedValues(source map[string]LooseStrings, keys []string, limit int) map[string][]string {
+	var out map[string][]string
+	for _, key := range keys {
+		if values := distinctValues(source[key], limit, ""); len(values) > 0 {
+			if out == nil {
+				out = make(map[string][]string)
+			}
+			out[key] = values
+		}
+	}
+	return out
 }
 
 func distinctValues(values LooseStrings, limit int, except LooseString) []string {

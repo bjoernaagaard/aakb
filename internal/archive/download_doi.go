@@ -205,14 +205,7 @@ func (c *Client) downloadPaperFromSciDB(ctx context.Context, paper *Paper, req D
 	if transferErr != nil {
 		return nil, transferErr
 	}
-	return &DownloadResult{
-		Path:   res.Path,
-		Name:   res.Name,
-		Bytes:  res.Bytes,
-		MD5:    res.MD5,
-		SHA256: res.SHA256,
-		Reused: res.Reused,
-	}, nil
+	return downloadResultFromStore(res), nil
 }
 
 // resolvePaperDownloadURL resolves a relative download link against its
