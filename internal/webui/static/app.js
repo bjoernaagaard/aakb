@@ -499,6 +499,57 @@ function routeCurrentHash() {
 // Auth & startup views
 // ---------------------------------------------------------------------------
 
+function renderAuthBrand() {
+  return el(
+    'div',
+    { className: 'auth-brand' },
+    el('img', { src: '/ui/icon.svg', alt: '', width: 36, height: 36 }),
+    el('span', { className: 'auth-brand-name', textContent: 'aakb' })
+  );
+}
+
+function renderLoadingPanel(message) {
+  return el(
+    'div',
+    { className: 'panel loading-state', 'aria-busy': 'true' },
+    el('span', { className: 'spinner', 'aria-hidden': 'true' }),
+    el('span', { textContent: message })
+  );
+}
+
+function renderMissingIdView(title, message) {
+  clear(appEl);
+  const heading = el('h1', { className: 'page-title', textContent: title });
+  appEl.appendChild(
+    el(
+      'div',
+      { className: 'view-stack' },
+      heading,
+      el(
+        'section',
+        { className: 'panel empty-state' },
+        el('p', { textContent: message }),
+        el('a', { href: '#/', className: 'btn btn-primary btn-sm', textContent: 'Back to Search' })
+      )
+    )
+  );
+  focusHeading(heading, title);
+}
+
+function renderBadgeGroup(title, items) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return el(
+    'div',
+    null,
+    el('h2', { className: 'section-title', textContent: title }),
+    el(
+      'div',
+      { className: 'badge-row' },
+      items.map((item) => el('span', { className: 'badge', textContent: item }))
+    )
+  );
+}
+
 function renderSignInView() {
   clear(appEl);
 
@@ -595,12 +646,7 @@ function renderSignInView() {
   const shell = el(
     'div',
     { className: 'auth-shell' },
-    el(
-      'div',
-      { className: 'auth-brand' },
-      el('img', { src: '/ui/icon.svg', alt: '', width: 36, height: 36 }),
-      el('span', { className: 'auth-brand-name', textContent: 'aakb' })
-    ),
+    renderAuthBrand(),
     el(
       'section',
       { className: 'panel' },
@@ -633,12 +679,7 @@ function renderTokenRequiredView(err) {
   const shell = el(
     'div',
     { className: 'auth-shell' },
-    el(
-      'div',
-      { className: 'auth-brand' },
-      el('img', { src: '/ui/icon.svg', alt: '', width: 36, height: 36 }),
-      el('span', { className: 'auth-brand-name', textContent: 'aakb' })
-    ),
+    renderAuthBrand(),
     el(
       'section',
       { className: 'panel panel-warning', role: 'alert' },
@@ -673,12 +714,7 @@ function renderStartupErrorView(err) {
   const shell = el(
     'div',
     { className: 'auth-shell' },
-    el(
-      'div',
-      { className: 'auth-brand' },
-      el('img', { src: '/ui/icon.svg', alt: '', width: 36, height: 36 }),
-      el('span', { className: 'auth-brand-name', textContent: 'aakb' })
-    ),
+    renderAuthBrand(),
     heading,
     renderErrorPanel(err, {
       heading: err instanceof ApiError && err.title ? err.title : 'Server check failed',
@@ -1635,22 +1671,7 @@ function renderOpenAlexRecordView(id, signal) {
 async function renderRecordView(id, signal) {
   const trimmedId = String(id || '').trim();
   if (!trimmedId) {
-    clear(appEl);
-    const heading = el('h1', { className: 'page-title', textContent: 'Record' });
-    appEl.appendChild(
-      el(
-        'div',
-        { className: 'view-stack' },
-        heading,
-        el(
-          'section',
-          { className: 'panel empty-state' },
-          el('p', { textContent: 'No record identifier was provided.' }),
-          el('a', { href: '#/', className: 'btn btn-primary btn-sm', textContent: 'Back to Search' })
-        )
-      )
-    );
-    focusHeading(heading, 'Record');
+    renderMissingIdView('Record', 'No record identifier was provided.');
     return;
   }
 
@@ -1667,12 +1688,7 @@ async function renderRecordView(id, signal) {
       { className: 'view-stack' },
       el('a', { href: lastSearchHash || '#/', className: 'back-link', textContent: 'Back to Search' }),
       loadingHeading,
-      el(
-        'div',
-        { className: 'panel loading-state', 'aria-busy': 'true' },
-        el('span', { className: 'spinner', 'aria-hidden': 'true' }),
-        el('span', { textContent: 'Loading record details…' })
-      )
+      renderLoadingPanel('Loading record details…')
     )
   );
   focusHeading(loadingHeading, 'Record');
@@ -1891,37 +1907,15 @@ async function renderRecordView(id, signal) {
       );
     }
 
-    const hasSubjects = Array.isArray(data.subjects) && data.subjects.length > 0;
-    const hasSources = Array.isArray(data.sources) && data.sources.length > 0;
-    if (hasSubjects || hasSources) {
+    const subjectsGroup = renderBadgeGroup('Subjects', data.subjects);
+    const sourcesGroup = renderBadgeGroup('Sources', data.sources);
+    if (subjectsGroup || sourcesGroup) {
       sections.push(
         el(
           'section',
           { className: 'panel view-stack' },
-          hasSubjects
-            ? el(
-                'div',
-                null,
-                el('h2', { className: 'section-title', textContent: 'Subjects' }),
-                el(
-                  'div',
-                  { className: 'badge-row' },
-                  data.subjects.map((sub) => el('span', { className: 'badge', textContent: sub }))
-                )
-              )
-            : null,
-          hasSources
-            ? el(
-                'div',
-                null,
-                el('h2', { className: 'section-title', textContent: 'Sources' }),
-                el(
-                  'div',
-                  { className: 'badge-row' },
-                  data.sources.map((src) => el('span', { className: 'badge', textContent: src }))
-                )
-              )
-            : null
+          subjectsGroup,
+          sourcesGroup
         )
       );
     }
@@ -1968,22 +1962,7 @@ async function renderReadView(id, signal) {
   const backLabel = lastRecordHash ? 'Back to Record' : 'Back to Search';
 
   if (!trimmedId) {
-    clear(appEl);
-    const heading = el('h1', { className: 'page-title', textContent: 'Read article' });
-    appEl.appendChild(
-      el(
-        'div',
-        { className: 'view-stack' },
-        heading,
-        el(
-          'section',
-          { className: 'panel empty-state' },
-          el('p', { textContent: 'No article identifier was provided.' }),
-          el('a', { href: '#/', className: 'btn btn-primary btn-sm', textContent: 'Back to Search' })
-        )
-      )
-    );
-    focusHeading(heading, 'Read article');
+    renderMissingIdView('Read article', 'No article identifier was provided.');
     return;
   }
 
@@ -1995,12 +1974,7 @@ async function renderReadView(id, signal) {
       { className: 'view-stack' },
       el('a', { href: backHref, className: 'back-link', textContent: backLabel }),
       loadingHeading,
-      el(
-        'div',
-        { className: 'panel loading-state', 'aria-busy': 'true' },
-        el('span', { className: 'spinner', 'aria-hidden': 'true' }),
-        el('span', { textContent: 'Fetching article text…' })
-      )
+      renderLoadingPanel('Fetching article text…')
     )
   );
   focusHeading(loadingHeading, 'Read article');
@@ -2222,12 +2196,7 @@ async function renderAccountView(signal) {
       'div',
       { className: 'view-stack' },
       heading,
-      el(
-        'div',
-        { className: 'panel loading-state', 'aria-busy': 'true' },
-        el('span', { className: 'spinner', 'aria-hidden': 'true' }),
-        el('span', { textContent: 'Loading account status…' })
-      )
+      renderLoadingPanel('Loading account status…')
     )
   );
   focusHeading(heading, 'Account');
@@ -2392,12 +2361,7 @@ async function boot() {
     el(
       'div',
       { className: 'auth-shell' },
-      el(
-        'div',
-        { className: 'panel loading-state', 'aria-busy': 'true' },
-        el('span', { className: 'spinner', 'aria-hidden': 'true' }),
-        el('span', { textContent: 'Connecting to aakb…' })
-      )
+      renderLoadingPanel('Connecting to aakb…')
     )
   );
 
