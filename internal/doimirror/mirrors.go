@@ -25,6 +25,9 @@ var doiOriginOptions = mirror.OriginOptions{
 	InvalidReason:     "invalid_doi_base_url",
 	InvalidPrefix:     "DOI mirror base URL",
 	ParseErrorMessage: "invalid DOI mirror base URL",
+	BaseField:         "DOIMirrorBaseURL",
+	MirrorsField:      "DOIMirrors",
+	AllowedTLDsField:  "DOIMirrorAllowedTLDs",
 }
 
 // ParseBaseURL validates and canonicalizes a configured DOI mirror origin,

@@ -109,7 +109,7 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request, policy Retr
 				return resp, nil
 			}
 			DrainAndClose(resp.Body)
-			if sleepErr := sleepContext(ctx, delay); sleepErr != nil {
+			if sleepErr := SleepContext(ctx, delay); sleepErr != nil {
 				return nil, sleepErr
 			}
 			continue
@@ -119,8 +119,8 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request, policy Retr
 		if !shouldRetryError(ctx, err, policy) || attempt == policy.MaxAttempts {
 			return nil, lastErr
 		}
-		delay := jitteredBackoff(attempt, policy.BaseDelay, policy.MaxDelay)
-		if sleepErr := sleepContext(ctx, delay); sleepErr != nil {
+		delay := JitteredBackoff(attempt, policy.BaseDelay, policy.MaxDelay)
+		if sleepErr := SleepContext(ctx, delay); sleepErr != nil {
 			return nil, sleepErr
 		}
 	}
@@ -156,10 +156,12 @@ func retryDelay(resp *http.Response, attempt int, policy RetryPolicy) (time.Dura
 		}
 		return retryAfter, true
 	}
-	return jitteredBackoff(attempt, policy.BaseDelay, policy.MaxDelay), true
+	return JitteredBackoff(attempt, policy.BaseDelay, policy.MaxDelay), true
 }
 
-func jitteredBackoff(attempt int, base, maxDelay time.Duration) time.Duration {
+// JitteredBackoff computes an exponential backoff delay bounded by maxDelay
+// with +/-20% random jitter so concurrent callers do not synchronize retries.
+func JitteredBackoff(attempt int, base, maxDelay time.Duration) time.Duration {
 	shift := min(max(attempt-1, 0), 10)
 	delay := base << shift
 	if delay > maxDelay || delay <= 0 {
@@ -174,7 +176,8 @@ func jitteredBackoff(attempt int, base, maxDelay time.Duration) time.Duration {
 	return max(delay+offset, 0)
 }
 
-func sleepContext(ctx context.Context, d time.Duration) error {
+// SleepContext waits for d or returns early with ctx.Err() if ctx is canceled.
+func SleepContext(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return ctx.Err()
 	}

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -164,7 +163,7 @@ func (c *Client) get(ctx context.Context, route string, values url.Values, targe
 				return err
 			}
 			if attempt < apiMaxAttempts {
-				if sleepErr := sleepContext(ctx, jitteredBackoff(attempt)); sleepErr != nil {
+				if sleepErr := httpx.SleepContext(ctx, httpx.JitteredBackoff(attempt, apiBaseDelay, apiMaxDelay)); sleepErr != nil {
 					return sleepErr
 				}
 				continue
@@ -202,7 +201,7 @@ func (c *Client) get(ctx context.Context, route string, values url.Values, targe
 		if !ok {
 			return failure
 		}
-		if sleepErr := sleepContext(ctx, delay); sleepErr != nil {
+		if sleepErr := httpx.SleepContext(ctx, delay); sleepErr != nil {
 			return sleepErr
 		}
 	}
@@ -266,8 +265,7 @@ func isTerminalRequestError(err error) bool {
 	if errors.Is(err, httpx.ErrRedirectRefused) || errors.Is(err, httpx.ErrUnsafeURL) {
 		return true
 	}
-	var providerErr *httpx.ProviderError
-	if errors.As(err, &providerErr) && providerErr != nil {
+	if providerErr, ok := errors.AsType[*httpx.ProviderError](err); ok && providerErr != nil {
 		return providerErr.Code == httpx.CodeInvalidArgument
 	}
 	return false
@@ -280,8 +278,7 @@ func readFailure(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	var providerErr *httpx.ProviderError
-	if errors.As(err, &providerErr) && providerErr != nil {
+	if providerErr, ok := errors.AsType[*httpx.ProviderError](err); ok && providerErr != nil {
 		return err
 	}
 	if errors.Is(err, httpx.ErrBodyIdleTimeout) {
@@ -309,33 +306,5 @@ func retryDelay(retryAfterHeader string, attempt int) (time.Duration, bool) {
 		}
 		return duration, true
 	}
-	return jitteredBackoff(attempt), true
-}
-
-func jitteredBackoff(attempt int) time.Duration {
-	shift := min(max(attempt-1, 0), 10)
-	delay := apiBaseDelay << shift
-	if delay > apiMaxDelay || delay <= 0 {
-		delay = apiMaxDelay
-	}
-	jitterRange := delay / 5
-	if jitterRange <= 0 {
-		return delay
-	}
-	offset := time.Duration(rand.Int64N(int64(2*jitterRange)+1)) - jitterRange //nolint:gosec // G404: retry backoff jitter is not security-sensitive
-	return max(delay+offset, 0)
-}
-
-func sleepContext(ctx context.Context, duration time.Duration) error {
-	if duration <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return httpx.JitteredBackoff(attempt, apiBaseDelay, apiMaxDelay), true
 }

@@ -332,9 +332,9 @@ func (c *Client) signInAt(ctx context.Context, origin string) (string, error) {
 		}
 		c.selector.RecordFailure(parent, origin, mirror.UnreachableFailure(err))
 		if signCtx.Err() != nil {
-			return "", httpx.NewError(httpx.CodeTimeout, "signin_timeout", fmt.Sprintf("%s did not answer the sign-in form within %s", requestHost(origin), c.signInTimeout))
+			return "", httpx.NewError(httpx.CodeTimeout, "signin_timeout", fmt.Sprintf("%s did not answer the sign-in form within %s", httpx.RequestHost(origin), c.signInTimeout))
 		}
-		return "", c.requestFailure(err, accountURL)
+		return "", c.http.RequestError(err, accountURL)
 	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxSignInBodyBytes))
 	_ = resp.Body.Close() //nolint:errcheck // reading sign-in response body is complete
@@ -347,7 +347,7 @@ func (c *Client) signInAt(ctx context.Context, origin string) (string, error) {
 			return accountCookieName + "=" + ck.Value, nil
 		}
 	}
-	host := responseHost(resp, accountURL)
+	host := httpx.ResponseHost(resp, accountURL)
 	if readErr == nil && bytes.Contains(body, []byte("Invalid secret key")) {
 		return "", httpx.NewError(httpx.CodeConfig, "invalid_secret_key", fmt.Sprintf("The archive rejected SecretKey. Copy the secret key from https://%s/account/ into SecretKey", host))
 	}
@@ -391,7 +391,7 @@ func (c *Client) doGetWithClient(ctx context.Context, rawURL string, extraHeader
 			if ctx.Err() == nil {
 				c.selector.RecordFailure(ctx, rawURL, mirror.UnreachableFailure(err))
 			}
-			return nil, c.requestFailure(err, rawURL)
+			return nil, c.http.RequestError(err, rawURL)
 		}
 
 		// Renew session once on HTTP 403 for archive HTML/JSON routes,
@@ -433,23 +433,23 @@ func (c *Client) fetchJSONWithHeaders(ctx context.Context, rawURL string, target
 		return &forbiddenError{message: "The archive refused " + what + "; it shows them to signed-in members only, so check that your membership is active"}
 	default:
 		httpx.DrainAndClose(resp.Body)
-		return httpResponseError(resp, rawURL)
+		return httpx.StatusError(resp, rawURL)
 	}
 
 	body, readErr := httpx.ReadBounded(resp.Body, httpx.DefaultMaxBodyBytes)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return c.requestFailure(readErr, rawURL)
+		return c.http.RequestError(readErr, rawURL)
 	}
 	if closeErr != nil {
-		return c.requestFailure(closeErr, rawURL)
+		return c.http.RequestError(closeErr, rawURL)
 	}
 	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '<' {
 		c.selector.RecordFailure(ctx, rawURL, mirror.Failure{Reason: "returned a web page instead of " + what, Blocked: true})
 		return httpx.NewError(httpx.CodeUpstreamBlocked, "html_instead_of_json", "archive returned a web page instead of "+what+"; check the mirror and account access")
 	}
 	if err := json.Unmarshal(body, target); err != nil {
-		return httpx.WrapError(httpx.CodeUpstream, "invalid_json", "invalid "+what+" from "+responseHost(resp, rawURL), err)
+		return httpx.WrapError(httpx.CodeUpstream, "invalid_json", "invalid "+what+" from "+httpx.ResponseHost(resp, rawURL), err)
 	}
 	return nil
 }

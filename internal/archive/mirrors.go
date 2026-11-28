@@ -27,6 +27,9 @@ var archiveOriginOptions = mirror.OriginOptions{
 	InvalidReason:     "invalid_base_url",
 	InvalidPrefix:     "base URL",
 	ParseErrorMessage: "invalid archive base URL",
+	BaseField:         "BaseURL",
+	MirrorsField:      "Mirrors",
+	AllowedTLDsField:  "AllowedTLDs",
 }
 
 // MirrorHealth summarizes the current probe and health state of one mirror.

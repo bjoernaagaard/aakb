@@ -40,8 +40,7 @@ type archiveDownloadRequest struct {
 var (
 	_ archiveProvider     = (*remoteArchiveProvider)(nil)
 	_ papersProvider      = (*openalexProvider)(nil)
-	_ doiDownloadProvider = (*remoteDOIMirrorProvider)(nil)
-	_ doiDownloadProvider = (*remoteUnpaywallProvider)(nil)
+	_ doiDownloadProvider = doiDownloadFunc(nil)
 )
 
 type doiDownloadRequest struct {

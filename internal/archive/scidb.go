@@ -77,15 +77,15 @@ func (c *Client) fetchSciDBPage(ctx context.Context, rawURL string) (*xhtml.Node
 			return nil, finalURL, httpx.NewError(httpx.CodeNotFound, "scidb_redirected", "SciDB redirected without providing the requested paper's PDF")
 		}
 		httpx.DrainAndClose(resp.Body)
-		return nil, finalURL, httpResponseError(resp, rawURL)
+		return nil, finalURL, httpx.StatusError(resp, rawURL)
 	}
 	body, readErr := httpx.ReadBounded(resp.Body, maxHTMLBytes+1)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return nil, finalURL, c.requestFailure(readErr, rawURL)
+		return nil, finalURL, c.http.RequestError(readErr, rawURL)
 	}
 	if closeErr != nil {
-		return nil, finalURL, c.requestFailure(closeErr, rawURL)
+		return nil, finalURL, c.http.RequestError(closeErr, rawURL)
 	}
 	if int64(len(body)) > maxHTMLBytes {
 		return nil, finalURL, httpx.NewError(httpx.CodeUpstream, "html_too_large", "SciDB response exceeded the HTML size limit")

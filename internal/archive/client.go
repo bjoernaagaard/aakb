@@ -7,13 +7,9 @@ import (
 	"context"
 	"crypto/md5" //nolint:gosec // G501: MD5 is required to validate archive file hashes
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +24,6 @@ const (
 
 	defaultSignInTimeout = 15 * time.Second
 )
-
-var diagnosticURLPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
 
 // Config configures an archive client. Empty paths are allowed at
 // construction time; operations that need persistence or downloads check them.
@@ -82,13 +76,8 @@ type Client struct {
 
 // NewClient validates configuration and builds a Client without touching the network.
 func NewClient(cfg Config) (*Client, error) {
-	for _, setting := range []struct{ field, path string }{
-		{"DownloadDir", cfg.DownloadDir},
-		{"CacheDir", cfg.CacheDir},
-	} {
-		if setting.path != "" && (!filepath.IsAbs(setting.path) || strings.ContainsRune(setting.path, 0)) {
-			return nil, httpx.NewError(httpx.CodeConfig, "invalid_path", setting.field+" must be an absolute path")
-		}
+	if err := store.ValidateDirs(cfg.DownloadDir, cfg.CacheDir); err != nil {
+		return nil, err
 	}
 
 	cookie, err := NormalizeAccountCookie(cfg.AccountCookie)
@@ -97,14 +86,11 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	candidates, err := mirror.BuildCandidates(mirror.CandidateConfig{
-		BaseURL:          cfg.BaseURL,
-		Mirrors:          cfg.Mirrors,
-		AllowedTLDs:      cfg.AllowedTLDs,
-		AutoBaseURL:      cfg.AutoBaseURL,
-		Origin:           archiveOriginOptions,
-		BaseField:        "BaseURL",
-		MirrorsField:     "Mirrors",
-		AllowedTLDsField: "AllowedTLDs",
+		BaseURL:     cfg.BaseURL,
+		Mirrors:     cfg.Mirrors,
+		AllowedTLDs: cfg.AllowedTLDs,
+		AutoBaseURL: cfg.AutoBaseURL,
+		Origin:      archiveOriginOptions,
 	})
 	if err != nil {
 		return nil, err
@@ -131,16 +117,9 @@ func NewClient(cfg Config) (*Client, error) {
 		Secrets:    []string{secretKey, cookie},
 	})
 
-	fileStore := cfg.Store
-	if fileStore == nil && cfg.DownloadDir != "" && cfg.CacheDir != "" {
-		fileStore, err = store.New(store.Config{
-			DownloadDir: cfg.DownloadDir,
-			CacheDir:    cfg.CacheDir,
-			HTTPClient:  guardedHTTP,
-		})
-		if err != nil {
-			return nil, err
-		}
+	fileStore, err := store.Ensure(cfg.Store, cfg.DownloadDir, cfg.CacheDir, guardedHTTP)
+	if err != nil {
+		return nil, err
 	}
 
 	c := &Client{
@@ -248,78 +227,12 @@ func normalizeHash(hash string) (string, error) {
 	return hash, nil
 }
 
-func requestHost(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Hostname() == "" {
-		return "upstream server"
-	}
-	return parsed.Hostname()
-}
-
-func responseHost(resp *http.Response, rawURL string) string {
-	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
-		rawURL = resp.Request.URL.String()
-	}
-	return requestHost(rawURL)
-}
-
-func httpResponseError(resp *http.Response, rawURL string) *httpx.ProviderError {
-	status := resp.StatusCode
-	host := responseHost(resp, rawURL)
-	message := strings.TrimSpace(fmt.Sprintf("HTTP status %d %s", status, http.StatusText(status))) + " from " + host
-	code := httpx.CodeUpstream
-	reason := "http_status"
-	switch status {
-	case http.StatusNotFound, http.StatusGone:
-		code = httpx.CodeNotFound
-		reason = "not_found"
-		message += ": requested resource is unavailable on this server"
-	case http.StatusUnauthorized, http.StatusForbidden:
-		code = httpx.CodeUpstreamBlocked
-		reason = "access_denied"
-		message += ": access denied"
-	case http.StatusTooManyRequests:
-		code = httpx.CodeUpstream
-		reason = "rate_limited"
-		message += ": rate limited; try again later"
-	default:
-		if status >= http.StatusInternalServerError {
-			message += ": server error; try again later"
-		}
-	}
-	return &httpx.ProviderError{
-		Code:        code,
-		Reason:      reason,
-		SafeMessage: message,
-		StatusCode:  status,
-	}
-}
-
-func (c *Client) requestFailure(err error, rawURL string) error {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	if pe, ok := errors.AsType[*httpx.ProviderError](err); ok && pe != nil {
-		return pe
-	}
-	message := err.Error()
-	if urlErr, ok := errors.AsType[*url.Error](err); ok && urlErr != nil {
-		message = urlErr.Err.Error()
-		if urlErr.URL != "" {
-			rawURL = urlErr.URL
-		}
-	}
-	message = diagnosticURLPattern.ReplaceAllStringFunc(message, requestHost)
-	safe := "request to " + requestHost(rawURL) + " failed: " + message
-	return c.http.Redactor().WrapError(httpx.CodeUpstream, "request_failed", safe, err)
-}
-
 func apiErrorMessage(message string) string {
 	if strings.Contains(message, "<") && strings.Contains(message, ">") {
 		return "API returned an HTML error message"
 	}
 	message = strings.Join(strings.Fields(message), " ")
-	message = diagnosticURLPattern.ReplaceAllStringFunc(message, requestHost)
+	message = httpx.SanitizeDiagnosticURLs(message)
 	const maxRunes = 240
 	if runes := []rune(message); len(runes) > maxRunes {
 		message = string(runes[:maxRunes]) + "…"

@@ -5,10 +5,8 @@ package unpaywall
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -47,14 +45,7 @@ type DownloadRequest struct {
 }
 
 // DownloadResult describes a stored PDF downloaded or reused via Unpaywall.
-type DownloadResult struct {
-	Path   string
-	Name   string
-	Bytes  int64
-	MD5    string
-	SHA256 string
-	Reused bool
-}
+type DownloadResult = store.Result
 
 // Client queries the Unpaywall v2 API and downloads verified open-access PDFs.
 type Client struct {
@@ -137,30 +128,14 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 	if !ok {
 		return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_doi", "doi must be a valid DOI or DOI URL")
 	}
-	format := strings.TrimSpace(req.Format)
-	if format != "" {
-		normalized, err := store.NormalizeFormat(format)
-		if err != nil {
-			return nil, err
-		}
-		if normalized != "pdf" {
-			return nil, httpx.NewError(httpx.CodeInvalidArgument, "invalid_format", "Unpaywall downloads provide PDF files only")
-		}
-		format = normalized
-	} else {
-		format = "pdf"
+	format, err := store.RequireFormat(req.Format, "pdf", "Unpaywall downloads provide PDF files only")
+	if err != nil {
+		return nil, err
 	}
 
 	key := "unpaywall:" + strings.ToLower(doi)
 	if reused, found := c.store.LookupKey(ctx, key); found {
-		return &DownloadResult{
-			Path:   reused.Path,
-			Name:   reused.Name,
-			Bytes:  reused.Bytes,
-			MD5:    reused.MD5,
-			SHA256: reused.SHA256,
-			Reused: true,
-		}, nil
+		return &reused, nil
 	}
 
 	record, err := c.lookup(ctx, doi)
@@ -192,16 +167,9 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 			Progress:    req.Progress,
 		})
 		if dlErr == nil {
-			return &DownloadResult{
-				Path:   res.Path,
-				Name:   res.Name,
-				Bytes:  res.Bytes,
-				MD5:    res.MD5,
-				SHA256: res.SHA256,
-				Reused: res.Reused,
-			}, nil
+			return &res, nil
 		}
-		if terminalError(ctx, dlErr) {
+		if httpx.IsTerminalDownloadError(ctx, dlErr) {
 			return nil, dlErr
 		}
 		lastErr = dlErr
@@ -314,19 +282,6 @@ func versionRank(version string) int {
 	default:
 		return 3
 	}
-}
-
-func terminalError(ctx context.Context, err error) bool {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	if pathErr, ok := errors.AsType[*os.PathError](err); ok && pathErr != nil {
-		return true
-	}
-	if pe, ok := errors.AsType[*httpx.ProviderError](err); ok && pe != nil {
-		return pe.Code == httpx.CodeConfig || pe.Reason == "local_io"
-	}
-	return false
 }
 
 func parseDOI(raw string) (string, bool) {

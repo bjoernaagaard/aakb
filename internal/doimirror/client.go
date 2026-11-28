@@ -6,9 +6,6 @@ package doimirror
 import (
 	"log/slog"
 	"net/http"
-	"net/url"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
@@ -17,8 +14,6 @@ import (
 )
 
 const defaultBrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-var diagnosticURLPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
 
 // Config configures a DOI mirror client. Without BaseURL or Mirrors, the
 // client is inactive and reports Configured() == false.
@@ -52,13 +47,8 @@ type Client struct {
 
 // NewClient validates configuration and builds a Client without touching the network.
 func NewClient(cfg Config) (*Client, error) {
-	for _, setting := range []struct{ field, path string }{
-		{"DownloadDir", cfg.DownloadDir},
-		{"CacheDir", cfg.CacheDir},
-	} {
-		if setting.path != "" && (!filepath.IsAbs(setting.path) || strings.ContainsRune(setting.path, 0)) {
-			return nil, httpx.NewError(httpx.CodeConfig, "invalid_path", setting.field+" must be an absolute path")
-		}
+	if err := store.ValidateDirs(cfg.DownloadDir, cfg.CacheDir); err != nil {
+		return nil, err
 	}
 
 	cookie, err := normalizeCookie(cfg.Cookie)
@@ -67,14 +57,11 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	candidates, err := mirror.BuildCandidates(mirror.CandidateConfig{
-		BaseURL:          cfg.BaseURL,
-		Mirrors:          cfg.Mirrors,
-		AllowedTLDs:      cfg.AllowedTLDs,
-		AutoBaseURL:      cfg.AutoBaseURL,
-		Origin:           doiOriginOptions,
-		BaseField:        "DOIMirrorBaseURL",
-		MirrorsField:     "DOIMirrors",
-		AllowedTLDsField: "DOIMirrorAllowedTLDs",
+		BaseURL:     cfg.BaseURL,
+		Mirrors:     cfg.Mirrors,
+		AllowedTLDs: cfg.AllowedTLDs,
+		AutoBaseURL: cfg.AutoBaseURL,
+		Origin:      doiOriginOptions,
 	})
 	if err != nil {
 		return nil, err
@@ -101,16 +88,9 @@ func NewClient(cfg Config) (*Client, error) {
 		PublicOnly: true,
 	})
 
-	fileStore := cfg.Store
-	if fileStore == nil && cfg.DownloadDir != "" && cfg.CacheDir != "" {
-		fileStore, err = store.New(store.Config{
-			DownloadDir: cfg.DownloadDir,
-			CacheDir:    cfg.CacheDir,
-			HTTPClient:  guardedHTTP,
-		})
-		if err != nil {
-			return nil, err
-		}
+	fileStore, err := store.Ensure(cfg.Store, cfg.DownloadDir, cfg.CacheDir, guardedHTTP)
+	if err != nil {
+		return nil, err
 	}
 
 	health := mirror.NewHealth()
@@ -174,19 +154,4 @@ func normalizeCookie(raw string) (string, error) {
 		return "", httpx.NewError(httpx.CodeConfig, "invalid_cookie", "DOIMirrorCookie contains invalid cookie characters")
 	}
 	return value, nil
-}
-
-func requestHost(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Hostname() == "" {
-		return "upstream server"
-	}
-	return parsed.Hostname()
-}
-
-func responseHost(resp *http.Response, rawURL string) string {
-	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
-		rawURL = resp.Request.URL.String()
-	}
-	return requestHost(rawURL)
 }

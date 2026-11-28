@@ -193,14 +193,7 @@ func (c *Client) DownloadHash(ctx context.Context, req DownloadRequest) (*Downlo
 
 	// O(1) manifest reuse before requiring credentials or calling the network.
 	if reused, ok := c.store.LookupMD5(ctx, hash); ok {
-		return &DownloadResult{
-			Path:   reused.Path,
-			Name:   reused.Name,
-			Bytes:  reused.Bytes,
-			MD5:    reused.MD5,
-			SHA256: reused.SHA256,
-			Reused: true,
-		}, nil
+		return downloadResultFromStore(reused), nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -274,14 +267,7 @@ collections:
 			})
 			if transferErr == nil {
 				c.fastHealth.Succeeded(pathIndex, domainIndex)
-				out := &DownloadResult{
-					Path:   res.Path,
-					Name:   res.Name,
-					Bytes:  res.Bytes,
-					MD5:    res.MD5,
-					SHA256: res.SHA256,
-					Reused: res.Reused,
-				}
+				out := downloadResultFromStore(res)
 				if !res.Reused {
 					out.DownloadsLeft = downloadsLeftAfter(account, hash)
 				}
@@ -334,10 +320,10 @@ func (c *Client) resolveDownloadURL(ctx context.Context, base, hash string, path
 	body, readErr := httpx.ReadBounded(resp.Body, maxFastAPIResponseSize)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return fastDownloadGrant{}, c.requestFailure(readErr, apiURL)
+		return fastDownloadGrant{}, c.http.RequestError(readErr, apiURL)
 	}
 	if closeErr != nil {
-		return fastDownloadGrant{}, c.requestFailure(closeErr, apiURL)
+		return fastDownloadGrant{}, c.http.RequestError(closeErr, apiURL)
 	}
 
 	var payload fastDownloadAnswer
@@ -346,12 +332,12 @@ func (c *Client) resolveDownloadURL(ctx context.Context, base, hash string, path
 	if jsonErr != nil || (resp.StatusCode != http.StatusOK && apiError == "") {
 		switch {
 		case resp.StatusCode == http.StatusForbidden:
-			baseErr := httpResponseError(resp, apiURL)
+			baseErr := httpx.StatusError(resp, apiURL)
 			return fastDownloadGrant{}, httpx.NewError(httpx.CodeUpstreamBlocked, "fast_api_forbidden", baseErr.SafeMessage+"; check account access and credentials")
 		case resp.StatusCode != http.StatusOK:
-			return fastDownloadGrant{}, httpResponseError(resp, apiURL)
+			return fastDownloadGrant{}, httpx.StatusError(resp, apiURL)
 		default:
-			return fastDownloadGrant{}, httpx.WrapError(httpx.CodeUpstream, "invalid_fast_api_json", fmt.Sprintf("invalid JSON from %s (HTTP status %d)", responseHost(resp, apiURL), resp.StatusCode), jsonErr)
+			return fastDownloadGrant{}, httpx.WrapError(httpx.CodeUpstream, "invalid_fast_api_json", fmt.Sprintf("invalid JSON from %s (HTTP status %d)", httpx.ResponseHost(resp, apiURL), resp.StatusCode), jsonErr)
 		}
 	}
 	if apiError != "" {
@@ -362,14 +348,25 @@ func (c *Client) resolveDownloadURL(ctx context.Context, base, hash string, path
 		return fastDownloadGrant{}, classifyFastAPIRejection(resp, apiURL, redactedMsg)
 	}
 	if payload.DownloadURL == nil || strings.TrimSpace(*payload.DownloadURL) == "" {
-		return fastDownloadGrant{}, httpx.NewError(httpx.CodeUpstream, "empty_download_url", fmt.Sprintf("API at %s returned an empty download URL", responseHost(resp, apiURL)))
+		return fastDownloadGrant{}, httpx.NewError(httpx.CodeUpstream, "empty_download_url", fmt.Sprintf("API at %s returned an empty download URL", httpx.ResponseHost(resp, apiURL)))
 	}
 	rawDownloadURL := strings.TrimSpace(*payload.DownloadURL)
 	parsed, err := url.Parse(rawDownloadURL)
 	if err != nil || !parsed.IsAbs() || httpx.ValidateHTTPSURL(parsed) != nil {
-		return fastDownloadGrant{}, httpx.NewError(httpx.CodeUpstream, "invalid_download_url", fmt.Sprintf("API at %s returned an invalid download URL", responseHost(resp, apiURL)))
+		return fastDownloadGrant{}, httpx.NewError(httpx.CodeUpstream, "invalid_download_url", fmt.Sprintf("API at %s returned an invalid download URL", httpx.ResponseHost(resp, apiURL)))
 	}
 	return fastDownloadGrant{url: parsed.String(), account: payload.AccountInfo}, nil
+}
+
+func downloadResultFromStore(res store.Result) *DownloadResult {
+	return &DownloadResult{
+		Path:   res.Path,
+		Name:   res.Name,
+		Bytes:  res.Bytes,
+		MD5:    res.MD5,
+		SHA256: res.SHA256,
+		Reused: res.Reused,
+	}
 }
 
 func classifyFastAPIRejection(resp *http.Response, apiURL, apiError string) error {
@@ -383,7 +380,7 @@ func classifyFastAPIRejection(resp *http.Response, apiURL, apiError string) erro
 	case http.StatusNotFound:
 		return &stopDownloadError{err: httpx.NewError(httpx.CodeNotFound, "hash_not_found", "The archive has no file with this hash; choose a hash from search")}
 	default:
-		return httpx.NewError(httpx.CodeUpstream, "fast_api_rejected", fmt.Sprintf("API rejected request at %s (HTTP status %d): %s", responseHost(resp, apiURL), resp.StatusCode, apiErrorMessage(apiError)))
+		return httpx.NewError(httpx.CodeUpstream, "fast_api_rejected", fmt.Sprintf("API rejected request at %s (HTTP status %d): %s", httpx.ResponseHost(resp, apiURL), resp.StatusCode, apiErrorMessage(apiError)))
 	}
 }
 

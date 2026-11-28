@@ -115,12 +115,15 @@ func roundUpSecond(d time.Duration) time.Duration {
 	return ((d + time.Second - 1) / time.Second) * time.Second
 }
 
-// OriginOptions controls how ParseOrigin validates and reports invalid origins.
+// OriginOptions controls how ParseOrigin and BuildCandidates validate and report invalid origins.
 type OriginOptions struct {
 	PublicOnly        bool
 	InvalidReason     string
 	InvalidPrefix     string
 	ParseErrorMessage string
+	BaseField         string
+	MirrorsField      string
+	AllowedTLDsField  string
 }
 
 // ParseOrigin validates and canonicalizes an HTTPS mirror origin, rejecting
@@ -209,14 +212,11 @@ func HostAllowedByTLDs(host string, allowed []string) bool {
 
 // CandidateConfig configures mirror host candidate resolution.
 type CandidateConfig struct {
-	BaseURL          string
-	Mirrors          []string
-	AllowedTLDs      []string
-	AutoBaseURL      bool
-	Origin           OriginOptions
-	BaseField        string
-	MirrorsField     string
-	AllowedTLDsField string
+	BaseURL     string
+	Mirrors     []string
+	AllowedTLDs []string
+	AutoBaseURL bool
+	Origin      OriginOptions
 }
 
 // BuildCandidates validates, TLD-checks, and deduplicates configured mirror origins.
@@ -228,7 +228,7 @@ func BuildCandidates(cfg CandidateConfig) ([]string, error) {
 		return nil, err
 	}
 	if baseHost != "" && !HostAllowedByTLDs(baseHost, allowed) {
-		return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", cfg.BaseField+" top-level domain is not in "+cfg.AllowedTLDsField)
+		return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", cfg.Origin.BaseField+" top-level domain is not in "+cfg.Origin.AllowedTLDsField)
 	}
 
 	var extraHosts []string
@@ -241,7 +241,7 @@ func BuildCandidates(cfg CandidateConfig) ([]string, error) {
 			return nil, parseErr
 		}
 		if !HostAllowedByTLDs(host, allowed) {
-			return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", cfg.MirrorsField+" contains a top-level domain outside "+cfg.AllowedTLDsField)
+			return nil, httpx.NewError(httpx.CodeConfig, "tld_not_allowed", cfg.Origin.MirrorsField+" contains a top-level domain outside "+cfg.Origin.AllowedTLDsField)
 		}
 		if !slices.Contains(extraHosts, host) {
 			extraHosts = append(extraHosts, host)

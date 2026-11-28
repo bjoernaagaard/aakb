@@ -16,6 +16,7 @@ import (
 
 	"github.com/bjoernaagaard/aakb"
 	"github.com/bjoernaagaard/aakb/internal/adapter"
+	"github.com/bjoernaagaard/aakb/internal/store"
 )
 
 const (
@@ -189,7 +190,7 @@ func (a *API) download(w http.ResponseWriter, r *http.Request) {
 		a.writeClientError(w, r, err)
 		return
 	}
-	if !validFilename(out.Name) {
+	if !store.ValidFilename(out.Name) {
 		writeProblem(w, http.StatusInternalServerError, string(aakb.CodeInternal), "The download has an unsupported filename.")
 		return
 	}

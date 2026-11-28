@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/bjoernaagaard/aakb"
+	"github.com/bjoernaagaard/aakb/internal/store"
 )
 
 func (a *API) serveFile(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +16,7 @@ func (a *API) serveFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, downloadsPath)
-	if !validFilename(name) {
+	if !store.ValidFilename(name) {
 		fileNotFound(w)
 		return
 	}
@@ -46,14 +46,6 @@ func (a *API) serveFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, name, info.ModTime(), file)
-}
-
-func validFilename(name string) bool {
-	if !filepath.IsLocal(name) || strings.ContainsAny(name, "/\\\x00") || strings.HasPrefix(name, ".") {
-		return false
-	}
-	ext := filepath.Ext(name)
-	return !strings.EqualFold(ext, ".part") && !strings.EqualFold(ext, ".tmp")
 }
 
 func fileNotFound(w http.ResponseWriter) {

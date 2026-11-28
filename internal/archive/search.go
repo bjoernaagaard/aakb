@@ -428,15 +428,15 @@ func (c *Client) fetchHTML(ctx context.Context, rawURL string) (*xhtml.Node, err
 			return nil, httpx.NewError(httpx.CodeNotFound, "redirected_away", "archive redirected away from the requested page")
 		}
 		httpx.DrainAndClose(resp.Body)
-		return nil, httpResponseError(resp, rawURL)
+		return nil, httpx.StatusError(resp, rawURL)
 	}
 	body, readErr := httpx.ReadBounded(resp.Body, maxHTMLBytes+1)
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return nil, c.requestFailure(readErr, rawURL)
+		return nil, c.http.RequestError(readErr, rawURL)
 	}
 	if closeErr != nil {
-		return nil, c.requestFailure(closeErr, rawURL)
+		return nil, c.http.RequestError(closeErr, rawURL)
 	}
 	if int64(len(body)) > maxHTMLBytes {
 		return nil, httpx.NewError(httpx.CodeUpstream, "html_too_large", "archive response exceeded the HTML size limit")

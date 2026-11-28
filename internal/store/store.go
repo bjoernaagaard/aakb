@@ -112,6 +112,33 @@ func absolutePath(path string) bool {
 	return path != "" && filepath.IsAbs(path) && !strings.ContainsRune(path, 0)
 }
 
+// ValidateDirs checks that any non-empty DownloadDir or CacheDir is an absolute
+// path free of NUL bytes.
+func ValidateDirs(downloadDir, cacheDir string) error {
+	for _, setting := range []struct{ field, path string }{
+		{"DownloadDir", downloadDir},
+		{"CacheDir", cacheDir},
+	} {
+		if setting.path != "" && !absolutePath(setting.path) {
+			return httpx.NewError(httpx.CodeConfig, "invalid_path", setting.field+" must be an absolute path")
+		}
+	}
+	return nil
+}
+
+// Ensure returns existing when non-nil, or constructs a Store when both
+// downloadDir and cacheDir are non-empty.
+func Ensure(existing *Store, downloadDir, cacheDir string, httpClient *httpx.Client) (*Store, error) {
+	if existing != nil || downloadDir == "" || cacheDir == "" {
+		return existing, nil
+	}
+	return New(Config{
+		DownloadDir: downloadDir,
+		CacheDir:    cacheDir,
+		HTTPClient:  httpClient,
+	})
+}
+
 // DownloadDir returns the absolute directory where downloaded files live.
 func (s *Store) DownloadDir() string {
 	return s.downloadDir

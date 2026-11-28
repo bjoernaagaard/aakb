@@ -80,6 +80,23 @@ func NormalizeFormat(format string) (string, error) {
 	return format, nil
 }
 
+// RequireFormat normalizes raw and verifies it equals want, defaulting an empty
+// value to want and returning mismatchMessage on any other format.
+func RequireFormat(raw, want, mismatchMessage string) (string, error) {
+	format := strings.TrimSpace(raw)
+	if format == "" {
+		return want, nil
+	}
+	normalized, err := NormalizeFormat(format)
+	if err != nil {
+		return "", err
+	}
+	if normalized != want {
+		return "", httpx.NewError(httpx.CodeInvalidArgument, "invalid_format", mismatchMessage)
+	}
+	return normalized, nil
+}
+
 // DownloadFormat infers a file extension from response headers or the final URL,
 // falling back to "bin".
 func DownloadFormat(header http.Header, requestURL *url.URL) string {

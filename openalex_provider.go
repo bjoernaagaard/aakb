@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -210,7 +209,7 @@ func (p *openalexProvider) Download(ctx context.Context, req openAlexDownloadReq
 		if fileErr == nil {
 			return openAlexDownloadResult(result), nil
 		}
-		if terminalDownloadError(ctx, fileErr) {
+		if httpx.IsTerminalDownloadError(ctx, fileErr) {
 			return nil, fileErr
 		}
 		lastErr = fileErr
@@ -230,7 +229,7 @@ func (p *openalexProvider) Download(ctx context.Context, req openAlexDownloadReq
 			if dlErr == nil {
 				return res, nil
 			}
-			if terminalDownloadError(ctx, dlErr) {
+			if httpx.IsTerminalDownloadError(ctx, dlErr) {
 				return nil, dlErr
 			}
 			if fallbackErr == nil {
@@ -307,7 +306,7 @@ func (p *openalexProvider) trySiblingDownloads(ctx context.Context, primary *ope
 			if fileErr == nil {
 				return openAlexDownloadResult(res), nil
 			}
-			if terminalDownloadError(ctx, fileErr) {
+			if httpx.IsTerminalDownloadError(ctx, fileErr) {
 				return nil, fileErr
 			}
 		}
@@ -446,21 +445,6 @@ func fallbackAllowed(ctx context.Context, err error) bool {
 		return providerErr.Code != httpx.CodeInvalidArgument
 	}
 	return true
-}
-
-// terminalDownloadError reports failures that must not fall back to another
-// source: canceled contexts, configuration or local I/O problems.
-func terminalDownloadError(ctx context.Context, err error) bool {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	if pathError, ok := errors.AsType[*os.PathError](err); ok && pathError != nil {
-		return true
-	}
-	if providerErr, ok := errors.AsType[*httpx.ProviderError](err); ok && providerErr != nil {
-		return providerErr.Code == httpx.CodeConfig || providerErr.Reason == "local_io"
-	}
-	return false
 }
 
 func parseWorkTypes(workType, relation string) []string {
