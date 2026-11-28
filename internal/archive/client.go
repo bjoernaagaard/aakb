@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -20,14 +19,12 @@ import (
 	"time"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/mirror"
 	"github.com/bjoernaagaard/aakb/internal/store"
 )
 
 const (
 	defaultBrowserUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-	privateDirMode  os.FileMode = 0o700
-	privateFileMode os.FileMode = 0o600
 
 	defaultSignInTimeout = 15 * time.Second
 )
@@ -64,8 +61,9 @@ type Client struct {
 	store       *store.Store
 	log         *slog.Logger
 
-	health   *mirrorHealth
-	selector *mirrorSelector
+	health   *mirror.Health
+	prober   *mirror.Prober
+	selector *mirror.Selector
 
 	sessionMu        sync.Mutex
 	cookie           string
@@ -98,7 +96,16 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
-	candidates, err := buildCandidates(cfg.BaseURL, cfg.Mirrors, cfg.AllowedTLDs, cfg.AutoBaseURL)
+	candidates, err := mirror.BuildCandidates(mirror.CandidateConfig{
+		BaseURL:          cfg.BaseURL,
+		Mirrors:          cfg.Mirrors,
+		AllowedTLDs:      cfg.AllowedTLDs,
+		AutoBaseURL:      cfg.AutoBaseURL,
+		Origin:           archiveOriginOptions,
+		BaseField:        "BaseURL",
+		MirrorsField:     "Mirrors",
+		AllowedTLDsField: "AllowedTLDs",
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -156,12 +163,33 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	c.restoreSession()
-	c.health = newMirrorHealth()
+	c.health = mirror.NewHealth()
 	if c.cacheDir != "" {
-		attachMirrorStore(c.cacheDir, c.health, c.log)
+		c.health.AttachStore(mirror.StoreConfig{
+			CacheDir:    c.cacheDir,
+			Filename:    mirrorStateFilename,
+			TempPattern: ".mirrors-*.tmp",
+			LogLabel:    "archive mirror",
+			Logger:      c.log,
+		})
 	}
-	prober := newMirrorProber(c.http, c.sessionCookie)
-	c.selector = newMirrorSelector(candidates, c.health, prober, c.log)
+	c.prober = mirror.NewProber(mirror.ProberConfig{
+		Client:       c.http,
+		Path:         mirrorProbePath,
+		MaxBodyBytes: maxProbeBodyBytes,
+		Cookie:       c.sessionCookie,
+		Validate:     validateArchiveProbe,
+		Label:        "mirror",
+	})
+	c.selector = mirror.NewSelector(mirror.SelectorConfig{
+		Hosts:              candidates,
+		AutoBaseURL:        c.autoBaseURL,
+		Health:             c.health,
+		Prober:             c.prober,
+		ClassifyProbeError: classifyArchiveProbeError,
+		Label:              "archive mirror",
+		Logger:             c.log,
+	})
 	return c, nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/mirror"
 )
 
 const (
@@ -152,7 +153,7 @@ func (c *Client) loadSession() (savedSession, bool) {
 	if c.cacheDir == "" || c.secretKey == "" {
 		return savedSession{}, false
 	}
-	data, err := readPrivateFile(c.cacheDir, sessionFilename, maxSessionFileBytes)
+	data, err := mirror.ReadPrivateFile(c.cacheDir, sessionFilename, maxSessionFileBytes)
 	if err != nil {
 		return savedSession{}, false
 	}
@@ -180,7 +181,7 @@ func (c *Client) saveSession(ctx context.Context, cookie string) {
 		saved.ReplacedSHA256 = secretFingerprint(c.configuredCookie)
 	}
 	path := filepath.Join(c.cacheDir, sessionFilename)
-	if err := writePrivateJSON(c.cacheDir, path, ".session-*.tmp", saved); err != nil {
+	if err := mirror.WritePrivateJSON(c.cacheDir, path, ".session-*.tmp", saved); err != nil {
 		c.log.WarnContext(ctx, "could not persist archive session", "error", err)
 	}
 }
@@ -303,7 +304,7 @@ func (c *Client) signInOrigins(ctx context.Context) ([]string, error) {
 	}
 	host, err := c.selector.Select(ctx)
 	if err != nil {
-		return nil, mirrorUnavailableError(err)
+		return nil, mirror.UnavailableProviderError(err, "mirrors_blocked", "mirrors_unavailable")
 	}
 	return []string{"https://" + host}, nil
 }
@@ -329,7 +330,7 @@ func (c *Client) signInAt(ctx context.Context, origin string) (string, error) {
 		if parent.Err() != nil {
 			return "", parent.Err()
 		}
-		c.mirrorFailed(parent, origin, unreachableFailure(err))
+		c.selector.RecordFailure(parent, origin, mirror.UnreachableFailure(err))
 		if signCtx.Err() != nil {
 			return "", httpx.NewError(httpx.CodeTimeout, "signin_timeout", fmt.Sprintf("%s did not answer the sign-in form within %s", requestHost(origin), c.signInTimeout))
 		}
@@ -338,8 +339,8 @@ func (c *Client) signInAt(ctx context.Context, origin string) (string, error) {
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxSignInBodyBytes))
 	_ = resp.Body.Close() //nolint:errcheck // reading sign-in response body is complete
 
-	if failure := responseFailure(resp); failure != nil {
-		c.mirrorFailed(parent, origin, *failure)
+	if failure := mirror.ResponseFailure(resp); failure != nil {
+		c.selector.RecordFailure(parent, origin, *failure)
 	}
 	for _, ck := range resp.Cookies() {
 		if ck.Name == accountCookieName && ck.Value != "" && ck.MaxAge >= 0 && validCookieValue(ck.Value) {
@@ -376,7 +377,7 @@ func (c *Client) doGetWithClient(ctx context.Context, rawURL string, extraHeader
 		for key, values := range extraHeaders {
 			req.Header[key] = slices.Clone(values)
 		}
-		_, isArchive := c.archiveHost(req.URL)
+		_, isArchive := c.selector.MatchHost(req.URL)
 		cookie := ""
 		if isArchive {
 			cookie = c.sessionCookie()
@@ -388,7 +389,7 @@ func (c *Client) doGetWithClient(ctx context.Context, rawURL string, extraHeader
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() == nil {
-				c.mirrorFailed(ctx, rawURL, unreachableFailure(err))
+				c.selector.RecordFailure(ctx, rawURL, mirror.UnreachableFailure(err))
 			}
 			return nil, c.requestFailure(err, rawURL)
 		}
@@ -406,8 +407,8 @@ func (c *Client) doGetWithClient(ctx context.Context, rawURL string, extraHeader
 			}
 		}
 
-		if failure := responseFailure(resp); failure != nil {
-			c.mirrorFailed(ctx, rawURL, *failure)
+		if failure := mirror.ResponseFailure(resp); failure != nil {
+			c.selector.RecordFailure(ctx, rawURL, *failure)
 		}
 		return resp, nil
 	}
@@ -444,7 +445,7 @@ func (c *Client) fetchJSONWithHeaders(ctx context.Context, rawURL string, target
 		return c.requestFailure(closeErr, rawURL)
 	}
 	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '<' {
-		c.mirrorFailed(ctx, rawURL, MirrorFailure{Reason: "returned a web page instead of " + what, Blocked: true})
+		c.selector.RecordFailure(ctx, rawURL, mirror.Failure{Reason: "returned a web page instead of " + what, Blocked: true})
 		return httpx.NewError(httpx.CodeUpstreamBlocked, "html_instead_of_json", "archive returned a web page instead of "+what+"; check the mirror and account access")
 	}
 	if err := json.Unmarshal(body, target); err != nil {

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/mirror"
 	"github.com/bjoernaagaard/aakb/internal/store"
 )
 
@@ -116,7 +117,7 @@ func (c *Client) DownloadDOI(ctx context.Context, req DownloadRequest) (*Downloa
 	})
 	if err != nil {
 		if pe, isPE := errors.AsType[*httpx.ProviderError](err); isPE && pe != nil && pe.Code == httpx.CodeUpstreamBlocked {
-			c.mirrorFailed(ctx, resolved.PDFURL, mirrorFailure{Reason: "returned HTML instead of a PDF", Blocked: true})
+			c.selector.RecordFailure(ctx, resolved.PDFURL, mirror.Failure{Reason: "returned HTML instead of a PDF", Blocked: true})
 		}
 		return nil, err
 	}
@@ -172,7 +173,7 @@ func (c *Client) resolveOn(ctx context.Context, base, doi string) (ViewerPage, e
 	parsed, parseErr := ParseViewerPage(finalURL, body)
 	if parseErr != nil {
 		if pe, ok := errors.AsType[*httpx.ProviderError](parseErr); ok && pe != nil && pe.Code == httpx.CodeUpstreamBlocked {
-			c.mirrorFailed(ctx, base, mirrorFailure{Reason: "answered with an anti-bot challenge", Blocked: true})
+			c.selector.RecordFailure(ctx, base, mirror.Failure{Reason: "answered with an anti-bot challenge", Blocked: true})
 		}
 		return ViewerPage{}, parseErr
 	}
@@ -192,19 +193,19 @@ func (c *Client) doGet(ctx context.Context, rawURL string, extraHeaders http.Hea
 		req.Header[key] = slices.Clone(values)
 	}
 	if c.cookie != "" {
-		if _, ok := c.mirrorHost(req.URL); ok {
+		if _, ok := c.selector.MatchHost(req.URL); ok {
 			req.Header.Set("Cookie", c.cookie)
 		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			c.mirrorFailed(ctx, rawURL, unreachableFailure(err))
+			c.selector.RecordFailure(ctx, rawURL, mirror.UnreachableFailure(err))
 		}
 		return nil, c.requestFailure(err, rawURL)
 	}
 	if failure := responseFailure(resp); failure != nil {
-		c.mirrorFailed(ctx, rawURL, *failure)
+		c.selector.RecordFailure(ctx, rawURL, *failure)
 	}
 	return resp, nil
 }

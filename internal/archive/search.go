@@ -13,6 +13,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/bjoernaagaard/aakb/internal/httpx"
+	"github.com/bjoernaagaard/aakb/internal/mirror"
 )
 
 // maxHTMLBytes bounds one archive HTML page read for search, account, SciDB,
@@ -391,7 +392,7 @@ func (c *Client) searchOn(ctx context.Context, base, query string, options Searc
 	cards := SearchCards(root)
 	c.logUnread("search", max(options.Page, 1), CheckSearchPage(root, cards))
 	if len(cards) == 0 && !IsArchivePage(root) {
-		c.mirrorFailed(ctx, pageURL, MirrorFailure{Reason: "answered a search with a page that is not the archive", Blocked: true})
+		c.selector.RecordFailure(ctx, pageURL, mirror.Failure{Reason: "answered a search with a page that is not the archive", Blocked: true})
 		return searchResults{pageURL: pageURL}, httpx.NewError(httpx.CodeUpstreamBlocked, "not_archive_page", "archive returned an unexpected page; check the mirror and account access")
 	}
 	if len(cards) == 0 && ShowsResults(root, options.Page) {
