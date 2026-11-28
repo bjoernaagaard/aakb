@@ -4,6 +4,16 @@ This file lists the changes a user can notice in each release. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-28
+
+### Changed
+
+- Unified mirror validation, health backoff, persistent cache state, and
+  failover selection across the archive and DOI mirror clients.
+- Consolidated shared HTTP status and request error formatting, retry backoff,
+  download store setup, DOI parsing, and web UI view helpers with no public
+  API changes.
+
 ## [0.4.0] - 2026-11-27
 
 ### Added
@@ -114,6 +124,7 @@ search, article reading and downloads behind `OPENALEX_API_KEY`, bearer
 token sign-in, the request limit for each client, and
 `GET /downloads/{name}`.
 
+[0.4.1]: https://github.com/bjoernaagaard/aakb/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bjoernaagaard/aakb/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/bjoernaagaard/aakb/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/bjoernaagaard/aakb/compare/v0.2.0...v0.2.1
